@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { redactSensitiveData } from "../middleware/sensitiveData.middleware.js";
 
 const databasePath = resolve(
   process.env.CHAT_HISTORY_DB_PATH || "./chat_history.sqlite",
@@ -27,7 +28,7 @@ const insertExchange = database.prepare(`
   VALUES (?, 'user', ?), (?, 'assistant', ?)
 `);
 const selectRecentMessages = database.prepare(`
-  SELECT role, content
+  SELECT id, role, content
   FROM (
     SELECT id, role, content
     FROM chat_messages
@@ -37,16 +38,30 @@ const selectRecentMessages = database.prepare(`
   )
   ORDER BY id ASC
 `);
+const updateMessage = database.prepare(`
+  UPDATE chat_messages SET content = ? WHERE thread_id = ? AND id = ?
+`);
 
 export function getChatHistory(threadId) {
   return selectRecentMessages
     .all(threadId, MAX_HISTORY_MESSAGES)
-    .map(({ role, content }) => ({
-      role: role === "user" ? "human" : "assistant",
-      content,
-    }));
+    .map(({ id, role, content }) => {
+      const redactedContent = redactSensitiveData(content);
+      if (redactedContent !== content) {
+        updateMessage.run(redactedContent, threadId, id);
+      }
+      return {
+        role: role === "user" ? "human" : "assistant",
+        content: redactedContent,
+      };
+    });
 }
 
 export function saveChatExchange(threadId, query, answer) {
-  insertExchange.run(threadId, query, threadId, answer);
+  insertExchange.run(
+    threadId,
+    redactSensitiveData(query),
+    threadId,
+    redactSensitiveData(answer),
+  );
 }

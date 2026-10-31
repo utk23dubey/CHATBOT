@@ -1,12 +1,21 @@
 import React, { useState, useRef, useEffect } from 'react';
 import './WhatsAppChat.css';
 
+type ContextMode = 'pdf' | 'web' | 'llm';
+
 interface Message {
   id: string;
   text: string;
   sender: 'me' | 'them';
   timestamp: string;
+  contextMode?: ContextMode;
 }
+
+const CONTEXT_MODE_LABELS: Record<ContextMode, string> = {
+  pdf: 'PDF',
+  web: 'Web search',
+  llm: 'LLM',
+};
 
 const INITIAL_MESSAGES: Message[] = [
   { id: '1', text: 'Hey! Are we still meeting for lunch today?', sender: 'them', timestamp: '11:45 AM' },
@@ -31,6 +40,93 @@ const WhatsAppChat: React.FC = () => {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  const consumeChatStream = async (response: Response, messageId: string) => {
+    if (!response.body) {
+      throw new Error('Chat response has no readable body');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let answer = '';
+
+    const handleEvent = (event: string) => {
+      const eventName = event.match(/^event:\s*(.+)$/m)?.[1];
+      const dataLine = event.match(/^data:\s*(.+)$/m)?.[1];
+      if (!dataLine) return;
+
+      const data: unknown = JSON.parse(dataLine);
+      if (typeof data !== 'object' || data === null) return;
+
+      if (
+        eventName === 'user_message' &&
+        'messageId' in data &&
+        typeof data.messageId === 'string' &&
+        'text' in data &&
+        typeof data.text === 'string'
+      ) {
+        const messageId = data.messageId;
+        const sanitizedText = data.text;
+        setMessages((currentMessages) =>
+          currentMessages.map((message) =>
+            message.id === messageId
+              ? { ...message, text: sanitizedText }
+              : message,
+          ),
+        );
+      } else if (
+        eventName === 'token' &&
+        'token' in data &&
+        typeof data.token === 'string'
+      ) {
+        answer += data.token;
+        setMessages((currentMessages) =>
+          currentMessages.map((message) =>
+            message.id === messageId ? { ...message, text: answer } : message,
+          ),
+        );
+      } else if (
+        eventName === 'complete' &&
+        'answer' in data &&
+        typeof data.answer === 'string'
+      ) {
+        answer = data.answer;
+        const contextMode =
+          'contextMode' in data &&
+          (data.contextMode === 'pdf' ||
+            data.contextMode === 'web' ||
+            data.contextMode === 'llm')
+            ? data.contextMode
+            : undefined;
+        setMessages((currentMessages) =>
+          currentMessages.map((message) =>
+            message.id === messageId
+              ? { ...message, text: answer, contextMode }
+              : message,
+          ),
+        );
+      } else if (eventName === 'error' && 'error' in data) {
+        throw new Error(
+          typeof data.error === 'string' ? data.error : 'Chat request failed',
+        );
+      }
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+
+      const events = buffer.split(/\r?\n\r?\n/);
+      buffer = events.pop() ?? '';
+      events.forEach(handleEvent);
+
+      if (done) {
+        if (buffer.trim()) handleEvent(buffer);
+        break;
+      }
+    }
+  };
 
   const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -157,65 +253,18 @@ const WhatsAppChat: React.FC = () => {
       const response = await fetch('http://localhost:3000/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, threadId: 'user-chat-1', model: 'ollama' }),
+        body: JSON.stringify({
+          query,
+          threadId: 'user-chat-1',
+          model: 'ollama',
+          clientMessageId: newMessage.id,
+        }),
       });
 
       if (!response.ok) {
         throw new Error(`Chat request failed (${response.status})`);
       }
-      if (!response.body) {
-        throw new Error('Chat response has no readable body');
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let answer = '';
-
-      const handleEvent = (event: string) => {
-        const eventName = event.match(/^event:\s*(.+)$/m)?.[1];
-        const dataLine = event.match(/^data:\s*(.+)$/m)?.[1];
-        if (!dataLine) return;
-
-        const data: unknown = JSON.parse(dataLine);
-        if (typeof data !== 'object' || data === null) return;
-
-        if (
-          eventName === 'token' &&
-          'token' in data &&
-          typeof data.token === 'string'
-        ) {
-          answer += data.token;
-          setTimeout(() => {
-            updateBotMessage(answer);
-          }, 5);
-        } else if (
-          eventName === 'complete' &&
-          'answer' in data &&
-          typeof data.answer === 'string'
-        ) {
-          answer = data.answer;
-        //   updateBotMessage(answer);
-        } else if (eventName === 'error' && 'error' in data) {
-          throw new Error(
-            typeof data.error === 'string' ? data.error : 'Chat request failed',
-          );
-        }
-      };
-
-      while (true) {
-        const { value, done } = await reader.read();
-        buffer += decoder.decode(value, { stream: !done });
-
-        const events = buffer.split(/\r?\n\r?\n/);
-        buffer = events.pop() ?? '';
-        events.forEach(handleEvent);
-
-        if (done) {
-          if (buffer.trim()) handleEvent(buffer);
-          break;
-        }
-      }
+      await consumeChatStream(response, botMessage.id);
     } catch (error) {
       console.error('Failed to send chat message:', error);
       updateBotMessage(
@@ -258,6 +307,11 @@ const WhatsAppChat: React.FC = () => {
               ) : (
                 <span className="message-text">{msg.text}</span>
               )}
+              {msg.contextMode && (
+                <span className="context-mode">
+                  Context: {CONTEXT_MODE_LABELS[msg.contextMode]}
+                </span>
+              )}
               <span className="timestamp">{msg.timestamp}</span>
             </div>
           </div>
@@ -293,6 +347,7 @@ const WhatsAppChat: React.FC = () => {
             className="chat-input"
             placeholder="Type a message"
             value={inputText}
+            disabled={isSending}
             onChange={(e) => setInputText(e.target.value)}
           />
           <button type="submit" className="send-button" disabled={!inputText.trim() || isSending}>

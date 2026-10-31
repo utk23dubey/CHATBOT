@@ -112,6 +112,12 @@
   word-wrap: break-word;
 }
 
+.context-mode {
+  color: #667781;
+  font-size: 11px;
+  margin-top: 6px;
+}
+
 .typing-indicator {
   display: flex;
   align-items: center;

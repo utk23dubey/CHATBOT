@@ -11,12 +11,21 @@ import { ChatOllama } from "@langchain/ollama";
 import { ChatOpenAI } from "@langchain/openai";
 
 import { TavilySearch } from "@langchain/tavily";
+import { Document } from "@langchain/core/documents";
 import {
   expandRetrievedPages,
   getVectorStore,
 } from "../models/vectorStore.model.js";
+import { redactSensitiveData } from "../middleware/sensitiveData.middleware.js";
 
 const chatMemory = new MemorySaver();
+
+const webSearchRequiredPattern =
+  /\b(?:search(?:ing)?(?:\s+(?:the\s+)?(?:web|internet)|\s+online|\s+for)|web\s+search|browse(?:\s+the)?\s+web|look\s+up(?:\s+online)?|find\s+(?:this\s+)?online|today|tonight|tomorrow|right\s+now|currently|current|latest|recent|breaking|live|upcoming|this\s+(?:week|month|year)|weather|temperature|forecast|prices?|news|scores?|exchange\s+rates?|stock\s+prices?|share\s+prices?|market\s+prices?|traffic|open\s+now|business\s+hours|time\s+in)\b/i;
+
+export function queryRequiresWebSearch(query) {
+  return webSearchRequiredPattern.test(query);
+}
 
 function getTextContent(content) {
   if (typeof content === "string") {
@@ -133,10 +142,29 @@ export function createChatGraph(chatModel) {
     const documents = vectorStore
       ? await expandRetrievedPages(matches, vectorStore)
       : [];
-    return { documents, documentsSatisfied: documents.length > 0 };
+    const redactedDocuments = documents.map(
+      (document) =>
+        new Document({
+          pageContent: redactSensitiveData(document.pageContent),
+          metadata: {
+            ...document.metadata,
+            ...(typeof document.metadata.source === "string"
+              ? { source: redactSensitiveData(document.metadata.source) }
+              : {}),
+          },
+        }),
+    );
+    return {
+      documents: redactedDocuments,
+      documentsSatisfied: redactedDocuments.length > 0,
+    };
   };
 
   const classifyUnansweredQuery = async ({ query, chatHistory }) => {
+    if (queryRequiresWebSearch(query)) {
+      return { requiresWebSearch: true };
+    }
+
     const router = chatModel.client.withStructuredOutput(
       {
         type: "object",
@@ -144,7 +172,7 @@ export function createChatGraph(chatModel) {
           requires_web_search: {
             type: "boolean",
             description:
-              "True if answering requires current, recent, or specific external facts not reliably covered by general knowledge. False for general explanations, greetings, simple calculations, and other questions answerable from general knowledge.",
+              "True when answering the current user query requires fresh or changing external information, or the user explicitly asks to search/find information online. False when the query can be answered from stable general knowledge.",
           },
         },
         required: ["requires_web_search"],
@@ -155,13 +183,22 @@ export function createChatGraph(chatModel) {
     const route = await router.invoke([
       [
         "system",
-        "Choose whether web search is necessary to answer the user's query. Prefer direct answering from general knowledge when possible. Use web search for current or changing facts, recent events, and specific external information. Use the conversation history to understand follow-up questions.",
+        "Decide whether answering only the current user query requires information that may have changed or an online search the user explicitly requested. Return true for live or time-sensitive information such as weather, temperatures, scores, prices, exchange rates, breaking news, current office holders, and upcoming events. Return false for greetings, definitions, explanations, how-to questions, coding help, math, stable historical facts, and ordinary general-knowledge questions. Use conversation history only to resolve references in a follow-up; do not inherit a previous request's need for web search. Classify only the final user query, not words in the history or examples. When the answer depends on facts that may have changed, return true.",
+      ],
+      [
+        "human",
+        "Examples:\n- 'Explain how photosynthesis works' -> false\n- 'Write a JavaScript debounce function' -> false\n- 'What is 12 times 14?' -> false\n- 'Who won the latest election?' -> true\n- 'What is the weather in Paris today?' -> true\n- 'Search the web for the official React documentation' -> true",
       ],
       ...chatHistory.map(({ role, content }) => [role, content]),
-      ["human", query],
+      [
+        "human",
+        `User query to classify (classify only this query):\n${query}`,
+      ],
     ]);
 
-    return { requiresWebSearch: route.requires_web_search };
+    return {
+      requiresWebSearch: route.requires_web_search === true,
+    };
   };
 
   const evaluateDocuments = async ({ query, documents }) => {
@@ -325,7 +362,10 @@ export function createChatGraph(chatModel) {
     )
     .addConditionalEdges(
       "classify_unanswered_query",
-      (state) => (state.requiresWebSearch ? "web_search" : "generate_answer"),
+      (state) =>
+        state.requiresWebSearch
+          ? "web_search"
+          : "generate_answer",
       {
         generate_answer: "generate_answer",
         web_search: "web_search",

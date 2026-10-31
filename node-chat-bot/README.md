@@ -79,6 +79,8 @@ Ingestion extracts PDF pages, splits their text into chunks of 1,000 characters 
 
 Completed chat exchanges are stored in SQLite in the `chat_messages` table. Each exchange saves the user's message and the assistant's final answer together. The latest 20 messages for a thread are loaded as context for later requests, including after a server restart. The database defaults to `./chat_history.sqlite` and can be relocated with `CHAT_HISTORY_DB_PATH`.
 
+Chat queries, extracted PDF text, and PDF filenames are redacted for common email, phone, government-ID, payment-card, medical-ID, date-of-birth, labeled name, and labeled address patterns before model use or persistence. Existing chat-history entries are redacted when loaded and updated in SQLite. This pattern-based filtering is a safeguard, not complete PHI detection or a guarantee of HIPAA compliance; review redacted output and do not send data that must not be processed.
+
 ### `POST /chat`
 
 Send a JSON request with a non-empty `query`. The optional `model` can be `openai`, `gemini`, `ollama`, a `gpt-*` model ID, or a `gemini-*` model ID. Selecting `ollama` uses `llama3.2:3b` by default, or the model configured in `OLLAMA_CHAT_MODEL`. The API returns a `threadId` and also stores it in an HTTP-only cookie so browser/API clients that retain cookies can continue the same conversation without sending the ID each time. To select a conversation explicitly, send the `threadId` returned by a previous response.
@@ -94,7 +96,7 @@ If `model` is omitted, the server uses `DEFAULT_CHAT_MODEL`. The endpoint respon
 
 ## Request flow
 
-The chat graph retrieves candidate chunks from Qdrant. If there are matches, the graph expands them to their full indexed PDF pages and asks an OpenAI evaluator whether the PDF context answers the query. Sufficient context goes to answer generation. Otherwise, the selected chat model classifies whether web search is needed: current or specific external facts go to Tavily, while general questions go directly to the model. The selected OpenAI, Gemini, or Ollama chat model generates the final answer from the chosen context and conversation history.
+The chat graph retrieves candidate chunks from Qdrant. If there are matches, the graph expands them to their full indexed PDF pages and asks an OpenAI evaluator whether the PDF context answers the query. Sufficient context goes to answer generation. Otherwise, explicit web-search requests and clearly time-sensitive topics such as weather, temperatures, current prices, and latest news route directly to Tavily; the selected chat model classifies other queries. General questions go directly to the model. The selected OpenAI, Gemini, or Ollama chat model generates the final answer from the chosen context and conversation history.
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f2f0ff', 'primaryTextColor': '#000000', 'secondaryTextColor': '#000000', 'tertiaryTextColor': '#000000', 'lineColor': '#000000', 'primaryBorderColor': '#000000'}}}%%

@@ -21,6 +21,7 @@ import {
 import { ChatOllama } from "@langchain/ollama";
 import { ChatOpenAI } from "@langchain/openai";
 import { TavilySearch } from "@langchain/tavily";
+import { Document as Document2 } from "@langchain/core/documents";
 
 // src/models/vectorStore.model.js
 import { Document } from "@langchain/core/documents";
@@ -193,8 +194,84 @@ async function expandRetrievedPages(documents, store) {
 }
 var vectorStoreCollectionName = collectionName;
 
+// src/middleware/sensitiveData.middleware.js
+var redactions = [
+  [
+    /\b[\w.!#$%&'*+/=?^`{|}~-]+@[\w-]+(?:\.[\w-]+)+\b/gi,
+    "[REDACTED_EMAIL]"
+  ],
+  [
+    /\b(?:ssn|social security number)\s*[:#=-]?\s*\d{3}[- ]?\d{2}[- ]?\d{4}\b/gi,
+    "[REDACTED_SSN]"
+  ],
+  [
+    /\b\d{3}[- ]?\d{2}[- ]?\d{4}\b/g,
+    "[REDACTED_SSN]"
+  ],
+  [
+    /\b(?:aadhaar|aadhar|uid)\s*(?:number|no\.?)?\s*[:#=-]?\s*\d{4}[ -]?\d{4}[ -]?\d{4}\b/gi,
+    "[REDACTED_GOVERNMENT_ID]"
+  ],
+  [
+    /\b\d{4}[ -]?\d{4}[ -]?\d{4}\b/g,
+    "[REDACTED_GOVERNMENT_ID]"
+  ],
+  [
+    /\b(?:credit|debit|payment)\s*card(?:\s*(?:number|no\.?))?\s*[:#=-]?\s*(?:\d[ -]?){13,19}\b/gi,
+    "[REDACTED_PAYMENT_CARD]"
+  ],
+  [
+    /(?<!\d)(?:\d[ -]?){13,19}(?!\d)/g,
+    "[REDACTED_PAYMENT_CARD]"
+  ],
+  [
+    /\b(?:mrn|medical record(?:s)?(?: number)?|patient id|health insurance(?: number| id)?)\s*[:#=-]?\s*[a-z0-9][a-z0-9-]{3,}\b/gi,
+    "[REDACTED_MEDICAL_ID]"
+  ],
+  [
+    /\b(?:date of birth|birth date|dob)\s*[:#=-]?\s*(?:\d{1,4}[/-]){1,2}\d{1,4}\b/gi,
+    "[REDACTED_DOB]"
+  ],
+  [
+    /\b(?:address|home address|street address)\s*[:=-]\s*[^,\n;]+(?:,\s*[^,\n;]+){0,3}/gi,
+    "[REDACTED_ADDRESS]"
+  ],
+  [
+    /\b(?:phone|mobile|telephone|contact number)\s*[:#=-]?\s*\+?[\d(][\d ().-]{6,}\d\b/gi,
+    "[REDACTED_PHONE]"
+  ],
+  [
+    /(?<!\w)\+\d{1,3}(?:[\s.-]?\d){7,14}(?!\w)/g,
+    "[REDACTED_PHONE]"
+  ],
+  [
+    /(?<!\d)[6-9]\d{9}(?!\d)/g,
+    "[REDACTED_PHONE]"
+  ],
+  [
+    /(?<!\d)(?:\+?1[\s.-]?)?\(?[2-9]\d{2}\)?[\s.-]?[2-9]\d{2}[\s.-]?\d{4}(?!\d)/g,
+    "[REDACTED_PHONE]"
+  ]
+];
+function redactSensitiveData(value) {
+  return redactions.reduce(
+    (text, [pattern, replacement]) => text.replace(pattern, replacement),
+    value
+  );
+}
+function redactChatQuery(req, res, next) {
+  if (typeof req.body?.query === "string") {
+    req.body.query = redactSensitiveData(req.body.query);
+  }
+  return next();
+}
+
 // src/services/chatGraph.service.js
 var chatMemory = new MemorySaver();
+var webSearchRequiredPattern = /\b(?:search(?:ing)?(?:\s+(?:the\s+)?(?:web|internet)|\s+online|\s+for)|web\s+search|browse(?:\s+the)?\s+web|look\s+up(?:\s+online)?|find\s+(?:this\s+)?online|today|tonight|tomorrow|right\s+now|currently|current|latest|recent|breaking|live|upcoming|this\s+(?:week|month|year)|weather|temperature|forecast|prices?|news|scores?|exchange\s+rates?|stock\s+prices?|share\s+prices?|market\s+prices?|traffic|open\s+now|business\s+hours|time\s+in)\b/i;
+function queryRequiresWebSearch(query) {
+  return webSearchRequiredPattern.test(query);
+}
 function getTextContent(content) {
   if (typeof content === "string") {
     return content;
@@ -287,16 +364,31 @@ function createChatGraph(chatModel) {
     const vectorStore2 = await getVectorStore();
     const matches = vectorStore2 ? await vectorStore2.similaritySearch(query, 8) : [];
     const documents = vectorStore2 ? await expandRetrievedPages(matches, vectorStore2) : [];
-    return { documents, documentsSatisfied: documents.length > 0 };
+    const redactedDocuments = documents.map(
+      (document) => new Document2({
+        pageContent: redactSensitiveData(document.pageContent),
+        metadata: {
+          ...document.metadata,
+          ...typeof document.metadata.source === "string" ? { source: redactSensitiveData(document.metadata.source) } : {}
+        }
+      })
+    );
+    return {
+      documents: redactedDocuments,
+      documentsSatisfied: redactedDocuments.length > 0
+    };
   };
   const classifyUnansweredQuery = async ({ query, chatHistory }) => {
+    if (queryRequiresWebSearch(query)) {
+      return { requiresWebSearch: true };
+    }
     const router2 = chatModel.client.withStructuredOutput(
       {
         type: "object",
         properties: {
           requires_web_search: {
             type: "boolean",
-            description: "True if answering requires current, recent, or specific external facts not reliably covered by general knowledge. False for general explanations, greetings, simple calculations, and other questions answerable from general knowledge."
+            description: "True when answering the current user query requires fresh or changing external information, or the user explicitly asks to search/find information online. False when the query can be answered from stable general knowledge."
           }
         },
         required: ["requires_web_search"],
@@ -307,12 +399,22 @@ function createChatGraph(chatModel) {
     const route = await router2.invoke([
       [
         "system",
-        "Choose whether web search is necessary to answer the user's query. Prefer direct answering from general knowledge when possible. Use web search for current or changing facts, recent events, and specific external information. Use the conversation history to understand follow-up questions."
+        "Decide whether answering only the current user query requires information that may have changed or an online search the user explicitly requested. Return true for live or time-sensitive information such as weather, temperatures, scores, prices, exchange rates, breaking news, current office holders, and upcoming events. Return false for greetings, definitions, explanations, how-to questions, coding help, math, stable historical facts, and ordinary general-knowledge questions. Use conversation history only to resolve references in a follow-up; do not inherit a previous request's need for web search. Classify only the final user query, not words in the history or examples. When the answer depends on facts that may have changed, return true."
+      ],
+      [
+        "human",
+        "Examples:\n- 'Explain how photosynthesis works' -> false\n- 'Write a JavaScript debounce function' -> false\n- 'What is 12 times 14?' -> false\n- 'Who won the latest election?' -> true\n- 'What is the weather in Paris today?' -> true\n- 'Search the web for the official React documentation' -> true"
       ],
       ...chatHistory.map(({ role, content }) => [role, content]),
-      ["human", query]
+      [
+        "human",
+        `User query to classify (classify only this query):
+${query}`
+      ]
     ]);
-    return { requiresWebSearch: route.requires_web_search };
+    return {
+      requiresWebSearch: route.requires_web_search === true
+    };
   };
   const evaluateDocuments = async ({ query, documents }) => {
     if (!process.env.OPENAI_API_KEY) {
@@ -462,8 +564,9 @@ async function ingestPdf(file) {
   }
   const documents = pages.filter((page) => page.pageContent.trim()).map((page) => ({
     ...page,
+    pageContent: redactSensitiveData(page.pageContent),
     metadata: {
-      source: file.originalname,
+      source: redactSensitiveData(file.originalname),
       ...Number.isInteger(page.metadata.loc?.pageNumber) ? { pageNumber: page.metadata.loc.pageNumber } : {}
     }
   }));
@@ -483,7 +586,7 @@ async function ingestPdf(file) {
   await vectorStore2.addDocuments(chunks);
   return {
     message: "PDF ingested successfully.",
-    filename: file.originalname,
+    filename: redactSensitiveData(file.originalname),
     pages: documents.length,
     chunks: chunks.length,
     collection: vectorStoreCollectionName,
@@ -517,7 +620,7 @@ var insertExchange = database.prepare(`
   VALUES (?, 'user', ?), (?, 'assistant', ?)
 `);
 var selectRecentMessages = database.prepare(`
-  SELECT role, content
+  SELECT id, role, content
   FROM (
     SELECT id, role, content
     FROM chat_messages
@@ -527,14 +630,28 @@ var selectRecentMessages = database.prepare(`
   )
   ORDER BY id ASC
 `);
+var updateMessage = database.prepare(`
+  UPDATE chat_messages SET content = ? WHERE thread_id = ? AND id = ?
+`);
 function getChatHistory(threadId) {
-  return selectRecentMessages.all(threadId, MAX_HISTORY_MESSAGES).map(({ role, content }) => ({
-    role: role === "user" ? "human" : "assistant",
-    content
-  }));
+  return selectRecentMessages.all(threadId, MAX_HISTORY_MESSAGES).map(({ id, role, content }) => {
+    const redactedContent = redactSensitiveData(content);
+    if (redactedContent !== content) {
+      updateMessage.run(redactedContent, threadId, id);
+    }
+    return {
+      role: role === "user" ? "human" : "assistant",
+      content: redactedContent
+    };
+  });
 }
 function saveChatExchange(threadId, query, answer) {
-  insertExchange.run(threadId, query, threadId, answer);
+  insertExchange.run(
+    threadId,
+    redactSensitiveData(query),
+    threadId,
+    redactSensitiveData(answer)
+  );
 }
 
 // src/controllers/chat.controller.js
@@ -563,6 +680,72 @@ data: ${JSON.stringify(data)}
 
 `);
 }
+function startEventStream(res) {
+  res.status(200).set({
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no"
+  });
+  res.flushHeaders();
+}
+async function streamChatResponse({
+  res,
+  graph,
+  config,
+  input,
+  threadId,
+  model
+}) {
+  try {
+    const stream = await graph.stream(input, {
+      ...config,
+      streamMode: ["custom", "updates"]
+    });
+    for await (const [mode, chunk] of stream) {
+      if (res.destroyed) {
+        return;
+      }
+      if (mode === "custom" && typeof chunk?.token === "string") {
+        sendEvent(res, "token", { token: chunk.token });
+        continue;
+      }
+    }
+    if (res.destroyed) {
+      return;
+    }
+    const { values: result } = await graph.getState(config);
+    saveChatExchange(threadId, result.query, result.answer);
+    sendEvent(res, "complete", {
+      answer: result.answer,
+      model: getChatModel(model).model,
+      threadId,
+      contextMode: result.documentsSatisfied ? "pdf" : result.webResults.length > 0 ? "web" : "llm",
+      ...result.documentsSatisfied ? {
+        chunks: result.documents.map((document) => ({
+          source: document.metadata.source || null,
+          ...Number.isInteger(document.metadata.pageNumber) ? { pageNumber: document.metadata.pageNumber } : {},
+          content: document.pageContent
+        }))
+      } : result.webResults.length > 0 ? {
+        sources: result.webResults.map((item) => ({
+          title: item.title,
+          url: item.url,
+          content: item.content
+        }))
+      } : {}
+    });
+    return res.end();
+  } catch (error) {
+    console.error("Chat stream failed:", error);
+    if (!res.destroyed) {
+      sendEvent(res, "error", {
+        error: error instanceof Error ? error.message : "Chat request failed."
+      });
+      return res.end();
+    }
+  }
+}
 async function uploadPdf(req, res, next) {
   const file = req.file || (Buffer.isBuffer(req.body) ? {
     buffer: req.body,
@@ -587,7 +770,7 @@ async function uploadPdf(req, res, next) {
   }
 }
 async function chat(req, res, next) {
-  const { query, model, threadId } = req.body ?? {};
+  const { query, model, threadId, clientMessageId } = req.body ?? {};
   if (typeof query !== "string" || query.trim().length === 0) {
     return res.status(400).json({
       error: "The 'query' field must be a non-empty string."
@@ -601,6 +784,11 @@ async function chat(req, res, next) {
       error: "The 'threadId' field must be a non-empty string of at most 128 characters."
     });
   }
+  if (clientMessageId !== void 0 && (typeof clientMessageId !== "string" || clientMessageId.length === 0 || clientMessageId.length > 128)) {
+    return res.status(400).json({
+      error: "The 'clientMessageId' field must be a non-empty string of at most 128 characters."
+    });
+  }
   const selectedChatModel = getChatModel(model?.trim());
   if (!selectedChatModel) {
     return res.status(400).json({
@@ -609,75 +797,38 @@ async function chat(req, res, next) {
   }
   try {
     const conversationId = threadId?.trim() || getThreadIdFromCookie(req) || "user-chat-1";
+    const modelChoice = model?.trim() || process.env.DEFAULT_CHAT_MODEL || "gpt-4o-mini";
     res.cookie(THREAD_COOKIE_NAME, conversationId, {
       httpOnly: true,
       sameSite: "lax",
       path: "/",
       maxAge: 7 * 24 * 60 * 60 * 1e3
     });
-    res.status(200).set({
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no"
-    });
-    res.flushHeaders();
-    try {
-      const graph = createChatGraph(selectedChatModel);
-      const config = { configurable: { thread_id: conversationId } };
-      const stream = await graph.stream(
-        {
-          query: query.trim(),
-          chatHistory: getChatHistory(conversationId),
-          documents: [],
-          documentsSatisfied: false,
-          webResults: [],
-          answer: ""
-        },
-        { ...config, streamMode: "custom" }
-      );
-      for await (const chunk of stream) {
-        if (res.destroyed) {
-          break;
-        }
-        if (typeof chunk?.token === "string" && chunk.token.length > 0) {
-          sendEvent(res, "token", { token: chunk.token });
-        }
-      }
-      if (res.destroyed) {
-        return;
-      }
-      const { values: result } = await graph.getState(config);
-      saveChatExchange(conversationId, query.trim(), result.answer);
-      sendEvent(res, "complete", {
-        answer: result.answer,
-        model: selectedChatModel.model,
-        threadId: conversationId,
-        contextMode: result.documentsSatisfied ? "pdf" : result.webResults.length > 0 ? "web" : "llm",
-        ...result.documentsSatisfied ? {
-          chunks: result.documents.map((document) => ({
-            source: document.metadata.source || null,
-            ...Number.isInteger(document.metadata.pageNumber) ? { pageNumber: document.metadata.pageNumber } : {},
-            content: document.pageContent
-          }))
-        } : result.webResults.length > 0 ? {
-          sources: result.webResults.map((item) => ({
-            title: item.title,
-            url: item.url,
-            content: item.content
-          }))
-        } : {}
+    startEventStream(res);
+    if (clientMessageId) {
+      sendEvent(res, "user_message", {
+        messageId: clientMessageId,
+        text: query.trim()
       });
-      return res.end();
-    } catch (error) {
-      console.error("Chat stream failed:", error);
-      if (!res.destroyed) {
-        sendEvent(res, "error", {
-          error: error instanceof Error ? error.message : "Chat request failed."
-        });
-        return res.end();
-      }
     }
+    const graph = createChatGraph(selectedChatModel);
+    const config = { configurable: { thread_id: conversationId } };
+    return await streamChatResponse({
+      res,
+      graph,
+      config,
+      input: {
+        query: query.trim(),
+        chatHistory: getChatHistory(conversationId),
+        documents: [],
+        documentsSatisfied: false,
+        requiresWebSearch: false,
+        webResults: [],
+        answer: ""
+      },
+      threadId: conversationId,
+      model: modelChoice
+    });
   } catch (error) {
     return next(error);
   }
@@ -703,7 +854,7 @@ router.post(
   upload.single("file"),
   uploadPdf
 );
-router.post("/chat", chat);
+router.post("/chat", redactChatQuery, chat);
 var chat_routes_default = router;
 
 // src/middleware/errorHandler.js

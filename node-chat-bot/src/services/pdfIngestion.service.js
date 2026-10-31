@@ -1,5 +1,6 @@
 import { PDFLoader } from "@langchain/community/document_loaders/fs/pdf";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
+import { redactSensitiveData } from "../middleware/sensitiveData.middleware.js";
 import {
   getVectorStore,
   vectorStoreCollectionName,
@@ -20,8 +21,9 @@ export async function ingestPdf(file) {
     .filter((page) => page.pageContent.trim())
     .map((page) => ({
       ...page,
+      pageContent: redactSensitiveData(page.pageContent),
       metadata: {
-        source: file.originalname,
+        source: redactSensitiveData(file.originalname),
         ...(Number.isInteger(page.metadata.loc?.pageNumber)
           ? { pageNumber: page.metadata.loc.pageNumber }
           : {}),
@@ -45,7 +47,7 @@ export async function ingestPdf(file) {
 
   return {
     message: "PDF ingested successfully.",
-    filename: file.originalname,
+    filename: redactSensitiveData(file.originalname),
     pages: documents.length,
     chunks: chunks.length,
     collection: vectorStoreCollectionName,
