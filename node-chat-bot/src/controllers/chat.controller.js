@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { createChatGraph, getChatModel } from "../services/chatGraph.service.js";
 import { ingestPdf } from "../services/pdfIngestion.service.js";
+import {
+  getChatHistory,
+  saveChatExchange,
+} from "../models/chatHistory.model.js";
 
 const THREAD_COOKIE_NAME = "chat_thread_id";
 
@@ -33,6 +37,89 @@ function getThreadIdFromCookie(req) {
 
 function sendEvent(res, event, data) {
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+function startEventStream(res) {
+  res.status(200).set({
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  res.flushHeaders();
+}
+
+async function streamChatResponse({
+  res,
+  graph,
+  config,
+  input,
+  threadId,
+  model,
+}) {
+  try {
+    const stream = await graph.stream(input, {
+      ...config,
+      streamMode: ["custom", "updates"],
+    });
+
+    for await (const [mode, chunk] of stream) {
+      if (res.destroyed) {
+        return;
+      }
+
+      if (mode === "custom" && typeof chunk?.token === "string") {
+        sendEvent(res, "token", { token: chunk.token });
+        continue;
+      }
+
+    }
+
+    if (res.destroyed) {
+      return;
+    }
+
+    const { values: result } = await graph.getState(config);
+    saveChatExchange(threadId, result.query, result.answer);
+    sendEvent(res, "complete", {
+      answer: result.answer,
+      model: getChatModel(model).model,
+      threadId,
+      contextMode: result.documentsSatisfied
+        ? "pdf"
+        : result.webResults.length > 0
+          ? "web"
+          : "llm",
+      ...(result.documentsSatisfied
+        ? {
+            chunks: result.documents.map((document) => ({
+              source: document.metadata.source || null,
+              ...(Number.isInteger(document.metadata.pageNumber)
+                ? { pageNumber: document.metadata.pageNumber }
+                : {}),
+              content: document.pageContent,
+            })),
+          }
+        : result.webResults.length > 0
+          ? {
+              sources: result.webResults.map((item) => ({
+                title: item.title,
+                url: item.url,
+                content: item.content,
+              })),
+            }
+          : {}),
+    });
+    return res.end();
+  } catch (error) {
+    console.error("Chat stream failed:", error);
+    if (!res.destroyed) {
+      sendEvent(res, "error", {
+        error: error instanceof Error ? error.message : "Chat request failed.",
+      });
+      return res.end();
+    }
+  }
 }
 
 export async function uploadPdf(req, res, next) {
@@ -68,7 +155,7 @@ export async function uploadPdf(req, res, next) {
 }
 
 export async function chat(req, res, next) {
-  const { query, model, threadId } = req.body ?? {};
+  const { query, model, threadId, clientMessageId } = req.body ?? {};
 
   if (typeof query !== "string" || query.trim().length === 0) {
     return res.status(400).json({
@@ -91,6 +178,17 @@ export async function chat(req, res, next) {
     });
   }
 
+  if (
+    clientMessageId !== undefined &&
+    (typeof clientMessageId !== "string" ||
+      clientMessageId.length === 0 ||
+      clientMessageId.length > 128)
+  ) {
+    return res.status(400).json({
+      error: "The 'clientMessageId' field must be a non-empty string of at most 128 characters.",
+    });
+  }
+
   const selectedChatModel = getChatModel(model?.trim());
   if (!selectedChatModel) {
     return res.status(400).json({
@@ -102,6 +200,8 @@ export async function chat(req, res, next) {
   try {
     const conversationId =
       threadId?.trim() || getThreadIdFromCookie(req) || 'user-chat-1';
+    const modelChoice =
+      model?.trim() || process.env.DEFAULT_CHAT_MODEL || "gpt-4o-mini";
     res.cookie(THREAD_COOKIE_NAME, conversationId, {
       httpOnly: true,
       sameSite: "lax",
@@ -109,82 +209,31 @@ export async function chat(req, res, next) {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    res.status(200).set({
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    });
-    res.flushHeaders();
-
-    try {
-      const graph = createChatGraph(selectedChatModel);
-      const config = { configurable: { thread_id: conversationId } };
-      const stream = await graph.stream(
-        {
-          query: query.trim(),
-          documents: [],
-          documentsSatisfied: false,
-          webResults: [],
-          answer: "",
-        },
-        { ...config, streamMode: "custom" },
-      );
-
-      for await (const chunk of stream) {
-        if (res.destroyed) {
-          break;
-        }
-
-        if (typeof chunk?.token === "string" && chunk.token.length > 0) {
-          sendEvent(res, "token", { token: chunk.token });
-        }
-      }
-
-      if (res.destroyed) {
-        return;
-      }
-
-      const { values: result } = await graph.getState(config);
-      sendEvent(res, "complete", {
-        answer: result.answer,
-        model: selectedChatModel.model,
-        threadId: conversationId,
-        contextMode: result.documentsSatisfied
-          ? "pdf"
-          : result.webResults.length > 0
-            ? "web"
-            : "llm",
-        ...(result.documentsSatisfied
-          ? {
-              chunks: result.documents.map((document) => ({
-                source: document.metadata.source || null,
-                ...(Number.isInteger(document.metadata.pageNumber)
-                  ? { pageNumber: document.metadata.pageNumber }
-                  : {}),
-                content: document.pageContent,
-              })),
-            }
-          : result.webResults.length > 0
-            ? {
-                sources: result.webResults.map((item) => ({
-                  title: item.title,
-                  url: item.url,
-                  content: item.content,
-                })),
-              }
-            : {}),
+    startEventStream(res);
+    if (clientMessageId) {
+      sendEvent(res, "user_message", {
+        messageId: clientMessageId,
+        text: query.trim(),
       });
-      return res.end();
-    } catch (error) {
-      console.error("Chat stream failed:", error);
-      if (!res.destroyed) {
-        sendEvent(res, "error", {
-          error: error instanceof Error ? error.message : "Chat request failed.",
-        });
-        return res.end();
-      }
     }
+    const graph = createChatGraph(selectedChatModel);
+    const config = { configurable: { thread_id: conversationId } };
+    return await streamChatResponse({
+      res,
+      graph,
+      config,
+      input: {
+        query: query.trim(),
+        chatHistory: getChatHistory(conversationId),
+        documents: [],
+        documentsSatisfied: false,
+        requiresWebSearch: false,
+        webResults: [],
+        answer: "",
+      },
+      threadId: conversationId,
+      model: modelChoice,
+    });
   } catch (error) {
     return next(error);
   }

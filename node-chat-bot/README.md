@@ -1,15 +1,16 @@
 # PDF RAG Chatbot
 
-An Express API for chatting with OpenAI, Gemini, or a local Ollama model. Uploaded PDFs are split into searchable chunks and stored locally in LanceDB. For each chat request, the LangGraph workflow tries the PDF store first, evaluates whether retrieved passages answer the question, then routes unanswered questions either to Tavily web search or directly to the chat model when general knowledge is sufficient.
+An Express API for chatting with OpenAI, Gemini, or a local Ollama model. Uploaded PDFs are split into searchable chunks and stored in Qdrant Cloud. For each chat request, the LangGraph workflow tries the PDF store first, evaluates whether retrieved passages answer the question, then routes unanswered questions either to Tavily web search or directly to the chat model when general knowledge is sufficient.
 
 ## Requirements
 
-- Node.js 22 or newer is recommended.
+- Node.js 22.13 or newer is recommended.
 - API keys for the providers you plan to use:
   - `OPENAI_API_KEY` for OpenAI chat and PDF-context evaluation.
   - `GOOGLE_API_KEY` for Gemini chat.
   - Ollama installed and running locally for Ollama chat; no API key is required.
   - `TAVILY_API_KEY` for web-search fallback.
+  - `QDRANT_URL` and `QDRANT_API_KEY` for Qdrant Cloud vector storage.
   - `LANGSMITH_API_KEY` to send traces to LangSmith (optional).
 
 ## Setup
@@ -26,11 +27,19 @@ An Express API for chatting with OpenAI, Gemini, or a local Ollama model. Upload
    Copy-Item .env.example .env
    ```
 
-   Leave out provider keys you do not use. To use Ollama, start its local service and pull the default model with `ollama pull llama3.2:3b`; you can set `OLLAMA_CHAT_MODEL` to a different installed model. `TAVILY_API_KEY` is required when the graph needs web search. Confirm that configured model IDs are available to your provider account.
+   Leave out provider keys you do not use. Set `QDRANT_URL` and `QDRANT_API_KEY` from your Qdrant Cloud cluster, and optionally set `QDRANT_COLLECTION`. To use Ollama, start its local service and pull the default model with `ollama pull llama3.2:3b`; you can set `OLLAMA_CHAT_MODEL` to a different installed model. `TAVILY_API_KEY` is required when the graph needs web search. Confirm that configured model IDs are available to your provider account.
 
    LangSmith tracing is enabled by `LANGSMITH_TRACING=true`. Set `LANGSMITH_API_KEY` to your LangSmith API key and choose a `LANGSMITH_PROJECT` name; traces are then sent automatically by LangChain. `LANGSMITH_ENDPOINT` is optional and is only needed for a non-default LangSmith region. Use the API endpoint (for example, `https://apac.api.smith.langchain.com` for APAC), not the LangSmith web-app host. Without an API key, LangSmith tracing will not be available.
 
-3. Start the server:
+3. If you have existing vectors in LanceDB, migrate the active table before starting the API:
+
+   ```sh
+   npm run migrate:lancedb
+   ```
+
+   `LANCEDB_PATH` and `LANCEDB_TABLE` select the source, defaulting to `./lancedb_data` and `pdf_documents_hf_minilm`. The source vectors must have the same dimensions as `HUGGINGFACE_EMBEDDING_MODEL`; the migration preserves their embeddings and page metadata. The script can be rerun safely. Keep the LanceDB files until you have verified the migrated collection.
+
+4. Start the server:
 
    ```sh
    npm start
@@ -38,7 +47,7 @@ An Express API for chatting with OpenAI, Gemini, or a local Ollama model. Upload
 
    The server listens on port `3000` by default, or the port specified by `PORT`.
 
-4. To bundle the application source:
+5. To bundle the application source:
 
    ```sh
    npm run build
@@ -57,16 +66,20 @@ After starting the server with LangSmith configured, send a chat request and ope
 
 ### `POST /upload`
 
-Ingest a PDF into LanceDB. The file can be sent as multipart form data in the `file` field:
+Ingest a PDF into the configured Qdrant collection. The file can be sent as multipart form data in the `file` field:
 
 ```sh
 curl -X POST http://localhost:3000/upload \
   -F "file=@./document.pdf"
 ```
 
-The endpoint also accepts the raw PDF as the request body; optionally provide its name with the `x-filename` header. Uploads are limited to 20 MB. The response includes the filename, page and chunk counts, and LanceDB table name.
+The endpoint also accepts the raw PDF as the request body; optionally provide its name with the `x-filename` header. Uploads are limited to 20 MB. The response includes the filename, page and chunk counts, and Qdrant collection name.
 
-Ingestion extracts PDF pages, splits their text into chunks of 1,000 characters with 200 characters of overlap, creates local Hugging Face embeddings, and writes the chunks and scalar source/page metadata to LanceDB. The embedding model is downloaded on first use. LanceDB data is stored under `LANCEDB_PATH`; re-ingest documents if you change the embedding model.
+Ingestion extracts PDF pages, splits their text into chunks of 1,000 characters with 200 characters of overlap, creates local Hugging Face embeddings, and writes the chunks and source/page metadata to Qdrant. The embedding model is downloaded on first use. Configure the Qdrant Cloud endpoint, API key, and collection with `QDRANT_URL`, `QDRANT_API_KEY`, and `QDRANT_COLLECTION`. The API creates keyword and integer payload indexes for `metadata.source` and `metadata.pageNumber` on existing and new collections so page expansion filters work.
+
+Completed chat exchanges are stored in SQLite in the `chat_messages` table. Each exchange saves the user's message and the assistant's final answer together. The latest 20 messages for a thread are loaded as context for later requests, including after a server restart. The database defaults to `./chat_history.sqlite` and can be relocated with `CHAT_HISTORY_DB_PATH`.
+
+Chat queries, extracted PDF text, and PDF filenames are redacted for common email, phone, government-ID, payment-card, medical-ID, date-of-birth, labeled name, and labeled address patterns before model use or persistence. Existing chat-history entries are redacted when loaded and updated in SQLite. This pattern-based filtering is a safeguard, not complete PHI detection or a guarantee of HIPAA compliance; review redacted output and do not send data that must not be processed.
 
 ### `POST /chat`
 
@@ -83,12 +96,12 @@ If `model` is omitted, the server uses `DEFAULT_CHAT_MODEL`. The endpoint respon
 
 ## Request flow
 
-The chat graph retrieves candidate chunks from LanceDB. If there are matches, the graph expands them to their full indexed PDF pages and asks an OpenAI evaluator whether the PDF context answers the query. Sufficient context goes to answer generation. Otherwise, the selected chat model classifies whether web search is needed: current or specific external facts go to Tavily, while general questions go directly to the model. The selected OpenAI, Gemini, or Ollama chat model generates the final answer from the chosen context and conversation history.
+The chat graph retrieves candidate chunks from Qdrant. If there are matches, the graph expands them to their full indexed PDF pages and asks an OpenAI evaluator whether the PDF context answers the query. Sufficient context goes to answer generation. Otherwise, explicit web-search requests and clearly time-sensitive topics such as weather, temperatures, current prices, and latest news route directly to Tavily; the selected chat model classifies other queries. General questions go directly to the model. The selected OpenAI, Gemini, or Ollama chat model generates the final answer from the chosen context and conversation history.
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f2f0ff', 'primaryTextColor': '#000000', 'secondaryTextColor': '#000000', 'tertiaryTextColor': '#000000', 'lineColor': '#000000', 'primaryBorderColor': '#000000'}}}%%
 flowchart TD
-    START([Start]) --> RETRIEVE[Retrieve PDF chunks from LanceDB]
+    START([Start]) --> RETRIEVE[Retrieve PDF chunks from Qdrant]
     RETRIEVE --> HAS_DOCS{Any chunks found?}
     HAS_DOCS -- No --> ROUTE{Needs web search?}
     HAS_DOCS -- Yes --> EVALUATE[Evaluate PDF context with OpenAI]
@@ -115,11 +128,13 @@ The same graph is available as a standalone [Mermaid chart](./langgraph.mmd).
 | `src/controllers/chat.controller.js` | Validates requests, invokes services, and formats responses. |
 | `src/services/pdfIngestion.service.js` | Loads, splits, and ingests PDF pages. |
 | `src/services/chatGraph.service.js` | Builds the LangGraph workflow and selects chat models. |
-| `src/models/vectorStore.model.js` | Connects to LanceDB and configures embeddings and page expansion. |
+| `src/models/vectorStore.model.js` | Connects to Qdrant and configures embeddings and page expansion. |
+| `src/scripts/migrateLanceDbToQdrant.js` | Migrates the configured LanceDB table into Qdrant Cloud. |
+| `src/models/chatHistory.model.js` | Stores completed user/assistant exchanges and loads recent conversation history from SQLite. |
 | `src/middleware/errorHandler.js` | Converts request errors into HTTP responses. |
 
 ## Notes
 
-- The LanceDB database is local and file-backed; a separate vector-database server is not required.
-- The API keeps conversation history per `threadId` in memory. The HTTP-only `chat_thread_id` cookie lasts seven days, but history is shared only by requests handled by the same server process and is cleared when that process restarts. Clients that do not retain cookies should send the returned `threadId` on each request.
+- LanceDB is used only as a migration source; the application stores and searches PDF vectors in Qdrant Cloud.
+- Chat history is persisted per `threadId` in SQLite. The HTTP-only `chat_thread_id` cookie lasts seven days; clients that do not retain cookies should send the returned `threadId` on each request. The SQLite database contains conversation content, so protect its file and backups as sensitive data.
 - The document-sufficiency check always uses OpenAI when PDF chunks are retrieved, regardless of the answer model. `OPENAI_API_KEY` is required for this evaluation even if Gemini is selected for answer generation.

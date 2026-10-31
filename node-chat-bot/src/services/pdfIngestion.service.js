@@ -1,8 +1,9 @@
 import { PDFLoader } from "@langchain/community/document_loaders/fs/pdf";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
+import { redactSensitiveData } from "../middleware/sensitiveData.middleware.js";
 import {
   getVectorStore,
-  vectorStoreTableName,
+  vectorStoreCollectionName,
 } from "../models/vectorStore.model.js";
 
 export async function ingestPdf(file) {
@@ -20,8 +21,9 @@ export async function ingestPdf(file) {
     .filter((page) => page.pageContent.trim())
     .map((page) => ({
       ...page,
+      pageContent: redactSensitiveData(page.pageContent),
       metadata: {
-        source: file.originalname,
+        source: redactSensitiveData(file.originalname),
         ...(Number.isInteger(page.metadata.loc?.pageNumber)
           ? { pageNumber: page.metadata.loc.pageNumber }
           : {}),
@@ -32,15 +34,23 @@ export async function ingestPdf(file) {
     chunkOverlap: 200,
   });
   const chunks = await splitter.splitDocuments(documents);
+  const pageChunkIndexes = new Map();
+  for (const chunk of chunks) {
+    const key = `${chunk.metadata.source}:${chunk.metadata.pageNumber}`;
+    const chunkIndex = pageChunkIndexes.get(key) || 0;
+    chunk.metadata.chunkIndex = chunkIndex;
+    pageChunkIndexes.set(key, chunkIndex + 1);
+  }
   const vectorStore = await getVectorStore({ createIfMissing: true });
 
   await vectorStore.addDocuments(chunks);
 
   return {
     message: "PDF ingested successfully.",
-    filename: file.originalname,
+    filename: redactSensitiveData(file.originalname),
     pages: documents.length,
     chunks: chunks.length,
-    table: vectorStoreTableName,
+    collection: vectorStoreCollectionName,
+    table: vectorStoreCollectionName,
   };
 }
