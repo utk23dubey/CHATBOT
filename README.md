@@ -62,6 +62,9 @@ If model is omitted, the server uses DEFAULT_CHAT_MODEL. The endpoint responds w
 Request flow
 The chat graph retrieves candidate chunks from LanceDB. If there are matches, the graph expands them to their full indexed PDF pages and asks an OpenAI evaluator whether the PDF context answers the query. Sufficient context goes to answer generation. Otherwise, the selected chat model classifies whether web search is needed: current or specific external facts go to Tavily, while general questions go directly to the model. The selected OpenAI, Gemini, or Ollama chat model generates the final answer from the chosen context and conversation history.
 
+<img width="2023" height="3383" alt="diagram (4)" src="https://github.com/user-attachments/assets/5ed994b9-207d-48e5-8617-f11d7a285619" />
+
+
 
 The same graph is available as a standalone Mermaid chart.
 
