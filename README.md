@@ -3,7 +3,7 @@ PDF RAG Chatbot
 <img width="1860" height="765" alt="image" src="https://github.com/user-attachments/assets/a74feaa8-f102-4f6a-a56c-f21111178835" />
 
 
-An Express API for chatting with OpenAI, Gemini, or a local Ollama model. Uploaded PDFs are split into searchable chunks and stored locally in LanceDB. For each chat request, the LangGraph workflow tries the PDF store first, evaluates whether retrieved passages answer the question, then routes unanswered questions either to Tavily web search or directly to the chat model when general knowledge is sufficient.
+An Express API for chatting with OpenAI, Gemini, or a local Ollama model. Uploaded PDFs are split into searchable chunks . Search in Quadrant for Embeddings. For each chat request, the LangGraph workflow tries the PDF store first, evaluates whether retrieved passages answer the question, then routes unanswered questions either to Tavily web search or directly to the chat model when general knowledge is sufficient.
 
 Requirements
 Node.js 22 or newer is recommended.
