@@ -3,5 +3,6 @@ node_modules/
 .env.*
 !.env.example
 lancedb_data/
+chat_history.sqlite*
 coverage/
 *.log

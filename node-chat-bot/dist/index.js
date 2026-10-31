@@ -25,32 +25,83 @@ import { TavilySearch } from "@langchain/tavily";
 // src/models/vectorStore.model.js
 import { Document } from "@langchain/core/documents";
 import { HuggingFaceTransformersEmbeddings } from "@langchain/community/embeddings/huggingface_transformers";
-import { LanceDB } from "@langchain/community/vectorstores/lancedb";
-import { connect } from "@lancedb/lancedb";
-var lanceDbPath = process.env.LANCEDB_PATH || "./lancedb_data";
-var tableName = process.env.LANCEDB_TABLE || "pdf_documents_hf_minilm";
-function getEmbeddings() {
+import { QdrantVectorStore } from "@langchain/qdrant";
+var collectionName = process.env.QDRANT_COLLECTION || "pdf_documents_hf_minilm";
+var metadataPayloadKey = "metadata";
+var contentPayloadKey = "content";
+var vectorStore;
+var collectionCheckPromise;
+var collectionCreatePromise;
+var payloadIndexPromise;
+var collectionReady = false;
+function getQdrantConfig() {
+  const url = process.env.QDRANT_URL;
+  const apiKey = process.env.QDRANT_API_KEY;
+  if (!url) {
+    throw new Error("QDRANT_URL must be set to connect to Qdrant Cloud.");
+  }
+  if (!apiKey) {
+    throw new Error("QDRANT_API_KEY must be set to connect to Qdrant Cloud.");
+  }
+  return { url, apiKey };
+}
+function createEmbeddings() {
   return new HuggingFaceTransformersEmbeddings({
     model: process.env.HUGGINGFACE_EMBEDDING_MODEL || "Xenova/all-MiniLM-L6-v2",
     batchSize: 32
   });
 }
 async function getVectorStore({ createIfMissing = false } = {}) {
-  const database = await connect(lanceDbPath);
-  const existingTables = await database.tableNames();
-  if (existingTables.includes(tableName)) {
-    return new LanceDB(getEmbeddings(), {
-      table: await database.openTable(tableName)
+  if (!vectorStore) {
+    const qdrantConfig = getQdrantConfig();
+    vectorStore = new QdrantVectorStore(createEmbeddings(), {
+      ...qdrantConfig,
+      collectionName,
+      metadataPayloadKey,
+      contentPayloadKey
     });
   }
-  if (!createIfMissing) {
-    return null;
+  if (!collectionReady) {
+    if (!collectionCheckPromise) {
+      collectionCheckPromise = vectorStore.client.getCollections().then(
+        ({ collections }) => collections.some((collection) => collection.name === collectionName)
+      ).finally(() => {
+        collectionCheckPromise = void 0;
+      });
+    }
+    const collectionExists = await collectionCheckPromise;
+    if (!collectionExists) {
+      if (!createIfMissing) {
+        return null;
+      }
+      if (!collectionCreatePromise) {
+        collectionCreatePromise = vectorStore.ensureCollection().finally(() => {
+          collectionCreatePromise = void 0;
+        });
+      }
+      await collectionCreatePromise;
+    }
+    if (!payloadIndexPromise) {
+      payloadIndexPromise = Promise.all([
+        vectorStore.client.createPayloadIndex(collectionName, {
+          field_name: `${metadataPayloadKey}.source`,
+          field_schema: "keyword",
+          wait: true
+        }),
+        vectorStore.client.createPayloadIndex(collectionName, {
+          field_name: `${metadataPayloadKey}.pageNumber`,
+          field_schema: "integer",
+          wait: true
+        })
+      ]).then(() => {
+        collectionReady = true;
+      }).finally(() => {
+        payloadIndexPromise = void 0;
+      });
+    }
+    await payloadIndexPromise;
   }
-  return new LanceDB(getEmbeddings(), {
-    uri: lanceDbPath,
-    tableName,
-    mode: "create"
-  });
+  return vectorStore;
 }
 function joinOverlappingChunks(chunks) {
   let text = "";
@@ -68,7 +119,7 @@ function joinOverlappingChunks(chunks) {
   }
   return text;
 }
-async function expandRetrievedPages(documents) {
+async function expandRetrievedPages(documents, store) {
   const pagesBySource = /* @__PURE__ */ new Map();
   for (const document of documents) {
     const { source, pageNumber } = document.metadata;
@@ -83,38 +134,64 @@ async function expandRetrievedPages(documents) {
   if (pagesBySource.size === 0) {
     return documents;
   }
-  const database = await connect(lanceDbPath);
-  const table = await database.openTable(tableName);
   const expandedPages = [];
   for (const [source, selectedPages] of pagesBySource) {
-    const escapedSource = source.replaceAll("'", "''");
-    const rows = await table.query().where(`source = '${escapedSource}'`).select(["source", "pageNumber", "text"]).limit(1e4).toArray();
-    const chunksByPage = /* @__PURE__ */ new Map();
-    for (const row of rows) {
-      if (!selectedPages.has(row.pageNumber)) {
-        continue;
-      }
-      if (!chunksByPage.has(row.pageNumber)) {
-        chunksByPage.set(row.pageNumber, []);
-      }
-      chunksByPage.get(row.pageNumber).push(row.text);
-    }
     for (const pageNumber of selectedPages) {
-      const pageChunks = chunksByPage.get(pageNumber);
-      if (!pageChunks?.length) {
-        continue;
-      }
-      expandedPages.push(
-        new Document({
-          pageContent: joinOverlappingChunks(pageChunks),
-          metadata: { source, pageNumber }
-        })
+      const chunks = [];
+      let offset;
+      do {
+        const result = await store.client.scroll(store.collectionName, {
+          filter: {
+            must: [
+              {
+                key: `${store.metadataPayloadKey}.source`,
+                match: { value: source }
+              },
+              {
+                key: `${store.metadataPayloadKey}.pageNumber`,
+                match: { value: pageNumber }
+              }
+            ]
+          },
+          limit: 1e3,
+          offset,
+          with_payload: [
+            store.metadataPayloadKey,
+            store.contentPayloadKey
+          ],
+          with_vector: false
+        });
+        for (const point of result.points) {
+          const metadata = point.payload?.[store.metadataPayloadKey];
+          const pageContent = point.payload?.[store.contentPayloadKey];
+          if (typeof pageContent === "string") {
+            chunks.push({
+              content: pageContent,
+              index: metadata && typeof metadata === "object" && "chunkIndex" in metadata && typeof metadata.chunkIndex === "number" ? metadata.chunkIndex : Number.MAX_SAFE_INTEGER,
+              id: String(point.id)
+            });
+          }
+        }
+        offset = result.next_page_offset ?? void 0;
+      } while (offset !== void 0);
+      chunks.sort(
+        (left, right) => left.index - right.index || left.id.localeCompare(right.id)
       );
+      if (chunks.length > 0) {
+        expandedPages.push(
+          new Document({
+            pageContent: joinOverlappingChunks(
+              chunks.map((chunk) => chunk.content)
+            ),
+            metadata: { source, pageNumber }
+          })
+        );
+      }
     }
   }
   return expandedPages.length > 0 ? expandedPages : documents;
 }
-var vectorStoreTableName = tableName;
+var vectorStoreCollectionName = collectionName;
 
 // src/services/chatGraph.service.js
 var chatMemory = new MemorySaver();
@@ -207,18 +284,10 @@ var ChatGraphState = Annotation.Root({
 });
 function createChatGraph(chatModel) {
   const retrieveDocuments = async ({ query }) => {
-    try {
-      const vectorStore = await getVectorStore();
-      const matches = vectorStore ? await vectorStore.similaritySearch(query, 8) : [];
-      const documents = await expandRetrievedPages(matches);
-      return { documents, documentsSatisfied: documents.length > 0 };
-    } catch (error) {
-      console.error(
-        "Document retrieval failed; routing the unanswered query:",
-        error
-      );
-      return { documents: [], documentsSatisfied: false };
-    }
+    const vectorStore2 = await getVectorStore();
+    const matches = vectorStore2 ? await vectorStore2.similaritySearch(query, 8) : [];
+    const documents = vectorStore2 ? await expandRetrievedPages(matches, vectorStore2) : [];
+    return { documents, documentsSatisfied: documents.length > 0 };
   };
   const classifyUnansweredQuery = async ({ query, chatHistory }) => {
     const router2 = chatModel.client.withStructuredOutput(
@@ -403,15 +472,69 @@ async function ingestPdf(file) {
     chunkOverlap: 200
   });
   const chunks = await splitter.splitDocuments(documents);
-  const vectorStore = await getVectorStore({ createIfMissing: true });
-  await vectorStore.addDocuments(chunks);
+  const pageChunkIndexes = /* @__PURE__ */ new Map();
+  for (const chunk of chunks) {
+    const key = `${chunk.metadata.source}:${chunk.metadata.pageNumber}`;
+    const chunkIndex = pageChunkIndexes.get(key) || 0;
+    chunk.metadata.chunkIndex = chunkIndex;
+    pageChunkIndexes.set(key, chunkIndex + 1);
+  }
+  const vectorStore2 = await getVectorStore({ createIfMissing: true });
+  await vectorStore2.addDocuments(chunks);
   return {
     message: "PDF ingested successfully.",
     filename: file.originalname,
     pages: documents.length,
     chunks: chunks.length,
-    table: vectorStoreTableName
+    collection: vectorStoreCollectionName,
+    table: vectorStoreCollectionName
   };
+}
+
+// src/models/chatHistory.model.js
+import { mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+var databasePath = resolve(
+  process.env.CHAT_HISTORY_DB_PATH || "./chat_history.sqlite"
+);
+var MAX_HISTORY_MESSAGES = 20;
+mkdirSync(dirname(databasePath), { recursive: true });
+var database = new DatabaseSync(databasePath);
+database.exec(`
+  CREATE TABLE IF NOT EXISTS chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    thread_id TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS chat_messages_thread_id_id
+    ON chat_messages (thread_id, id);
+`);
+var insertExchange = database.prepare(`
+  INSERT INTO chat_messages (thread_id, role, content)
+  VALUES (?, 'user', ?), (?, 'assistant', ?)
+`);
+var selectRecentMessages = database.prepare(`
+  SELECT role, content
+  FROM (
+    SELECT id, role, content
+    FROM chat_messages
+    WHERE thread_id = ?
+    ORDER BY id DESC
+    LIMIT ?
+  )
+  ORDER BY id ASC
+`);
+function getChatHistory(threadId) {
+  return selectRecentMessages.all(threadId, MAX_HISTORY_MESSAGES).map(({ role, content }) => ({
+    role: role === "user" ? "human" : "assistant",
+    content
+  }));
+}
+function saveChatExchange(threadId, query, answer) {
+  insertExchange.run(threadId, query, threadId, answer);
 }
 
 // src/controllers/chat.controller.js
@@ -505,6 +628,7 @@ async function chat(req, res, next) {
       const stream = await graph.stream(
         {
           query: query.trim(),
+          chatHistory: getChatHistory(conversationId),
           documents: [],
           documentsSatisfied: false,
           webResults: [],
@@ -524,6 +648,7 @@ async function chat(req, res, next) {
         return;
       }
       const { values: result } = await graph.getState(config);
+      saveChatExchange(conversationId, query.trim(), result.answer);
       sendEvent(res, "complete", {
         answer: result.answer,
         model: selectedChatModel.model,

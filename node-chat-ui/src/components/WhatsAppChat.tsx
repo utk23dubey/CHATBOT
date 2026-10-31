@@ -188,7 +188,7 @@ const WhatsAppChat: React.FC = () => {
           answer += data.token;
           setTimeout(() => {
             updateBotMessage(answer);
-          }, 100);
+          }, 5);
         } else if (
           eventName === 'complete' &&
           'answer' in data &&

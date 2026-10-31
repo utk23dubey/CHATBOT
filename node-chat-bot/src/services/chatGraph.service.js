@@ -17,7 +17,6 @@ import {
 } from "../models/vectorStore.model.js";
 
 const chatMemory = new MemorySaver();
-const MAX_HISTORY_MESSAGES = 20;
 
 function getTextContent(content) {
   if (typeof content === "string") {
@@ -127,20 +126,14 @@ const ChatGraphState = Annotation.Root({
 
 export function createChatGraph(chatModel) {
   const retrieveDocuments = async ({ query }) => {
-    try {
-      const vectorStore = await getVectorStore();
-      const matches = vectorStore
-        ? await vectorStore.similaritySearch(query, 8)
-        : [];
-      const documents = await expandRetrievedPages(matches);
-      return { documents, documentsSatisfied: documents.length > 0 };
-    } catch (error) {
-      console.error(
-        "Document retrieval failed; routing the unanswered query:",
-        error,
-      );
-      return { documents: [], documentsSatisfied: false };
-    }
+    const vectorStore = await getVectorStore();
+    const matches = vectorStore
+      ? await vectorStore.similaritySearch(query, 8)
+      : [];
+    const documents = vectorStore
+      ? await expandRetrievedPages(matches, vectorStore)
+      : [];
+    return { documents, documentsSatisfied: documents.length > 0 };
   };
 
   const classifyUnansweredQuery = async ({ query, chatHistory }) => {
