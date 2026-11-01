@@ -1,20 +1,24 @@
-%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f2f0ff', 'primaryTextColor': '#000000', 'secondaryTextColor': '#000000', 'tertiaryTextColor': '#000000', 'lineColor': '#f2f0ff', 'primaryBorderColor': '#000000'}}}%%
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f2f0ff', 'primaryTextColor': '#000000', 'secondaryTextColor': '#000000', 'tertiaryTextColor': '#000000', 'lineColor': '#4b5563', 'primaryBorderColor': '#4b5563'}}}%%
 flowchart TD
-    START([Start]) --> RETRIEVE["Retrieve PDF documents from LanceDB"]
-    RETRIEVE --> HAS_DOCS{"Any PDF documents retrieved?"}
+    START([Start]) --> RETRIEVE["Retrieve matching document chunks from Qdrant"]
+    RETRIEVE --> HAS_DOCS{"Any document chunks retrieved?"}
 
-    HAS_DOCS -- Yes --> EVALUATE["Evaluate PDF sufficiency with OpenAI"]
-    EVALUATE --> SUFFICIENT{"PDF documents sufficient?"}
-    SUFFICIENT -- Yes --> GENERATE["Generate answer"]
-    SUFFICIENT -- No --> CLASSIFY
+    HAS_DOCS -- Yes --> EVALUATE["Check document sufficiency with OpenAI"]
+    EVALUATE --> SUFFICIENT{"Documents answer the query?"}
+    SUFFICIENT -- Yes --> DOC_ANSWER["Generate answer from document context"]
+    SUFFICIENT -- No --> ROUTE
 
-    HAS_DOCS -- No --> CLASSIFY["Classify whether web search is needed"]
-    CLASSIFY --> NEEDS_WEB{"Web search required?"}
+    HAS_DOCS -- No --> ROUTE["Route unanswered query"]
+    ROUTE --> NEEDS_WEB{"Explicit search or time-sensitive query?"}
     NEEDS_WEB -- Yes --> WEB["Search the web with Tavily"]
-    NEEDS_WEB -- No --> GENERATE
-    WEB --> GENERATE
+    NEEDS_WEB -- No --> LLM_ANSWER["Generate answer from general knowledge"]
+    WEB --> WEB_ANSWER["Generate answer from web results"]
 
-    GENERATE --> END([Graph complete])
+    DOC_ANSWER --> COMPLETE["Return answer and contextMode: pdf or document"]
+    WEB_ANSWER --> COMPLETE_WEB["Return answer, contextMode: web, and sources"]
+    LLM_ANSWER --> COMPLETE_LLM["Return answer and contextMode: llm"]
 
-    HISTORY[("Conversation history via MemorySaver")] -. available to classifier and answer generation .-> CLASSIFY
-    HISTORY -. available to classifier and answer generation .-> GENERATE
+    HISTORY[("Conversation history from SQLite<br/>LangGraph checkpoint: MemorySaver")] -. query context .-> ROUTE
+    HISTORY -. answer context .-> DOC_ANSWER
+    HISTORY -. answer context .-> WEB_ANSWER
+    HISTORY -. answer context .-> LLM_ANSWER

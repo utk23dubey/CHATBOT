@@ -11,6 +11,7 @@
     "build": "esbuild index.js --bundle --platform=node --format=esm --packages=external --outfile=dist/index.js"
   },
   "dependencies": {
+    "@e965/xlsx": "^0.20.3",
     "@huggingface/transformers": "^3.8.1",
     "@lancedb/lancedb": "^0.19.1",
     "@langchain/community": "^1.0.0",
@@ -26,6 +27,7 @@
     "dotenv": "^16.6.1",
     "esbuild": "^0.25.0",
     "express": "^5.1.0",
+    "mammoth": "^1.13.0",
     "multer": "^2.0.2",
     "nodemon": "^3.1.14",
     "pdf-parse": "^1.1.1"
