@@ -241,3 +241,157 @@
 .send-button:not(:disabled):hover {
   background-color: #008f6f;
 }
+
+.attachment-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(11, 20, 26, 0.48);
+}
+
+.attachment-modal {
+  width: min(440px, 100%);
+  padding: 24px;
+  border-radius: 16px;
+  background: #fff;
+  color: #111b21;
+  box-shadow: 0 16px 48px rgba(11, 20, 26, 0.22);
+}
+
+.attachment-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.attachment-modal-header h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.attachment-modal-header p,
+.attachment-modal-note {
+  margin: 5px 0 0;
+  color: #667781;
+  font-size: 13px;
+}
+
+.attachment-modal-close {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #54656f;
+  cursor: pointer;
+  font-size: 25px;
+  line-height: 1;
+}
+
+.attachment-modal-close:hover {
+  background: #f0f2f5;
+}
+
+.attachment-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.attachment-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #e9edef;
+  border-radius: 12px;
+  background: #fff;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.attachment-option:hover,
+.attachment-option:focus-visible {
+  border-color: #00a884;
+  background: #f6fbf9;
+  outline: none;
+}
+
+.attachment-option > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.attachment-option strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.attachment-option small {
+  overflow: hidden;
+  color: #667781;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-option-icon {
+  display: grid;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: 10px;
+}
+
+.attachment-option-icon svg {
+  width: 23px;
+  height: 23px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+}
+
+.pdf-icon {
+  background: #fff0ef;
+  color: #d93025;
+}
+
+.docx-icon {
+  background: #edf3ff;
+  color: #2864dc;
+}
+
+.csv-icon {
+  background: #eaf7ef;
+  color: #16834b;
+}
+
+.excel-icon {
+  background: #eaf7ef;
+  color: #107c41;
+}
+
+.attachment-modal-note {
+  margin-top: 16px;
+}
+
+@media (max-width: 420px) {
+  .attachment-modal {
+    padding: 20px;
+  }
+
+  .attachment-options {
+    grid-template-columns: 1fr;
+  }
+}

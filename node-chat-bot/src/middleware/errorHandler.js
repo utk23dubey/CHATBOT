@@ -13,7 +13,7 @@ export function errorHandler(error, req, res, next) {
   if (error.type === "entity.too.large") {
     return res
       .status(413)
-      .json({ error: "The uploaded PDF exceeds the 20 MB limit." });
+      .json({ error: "The uploaded file exceeds the 20 MB limit." });
   }
 
   console.error("Request failed:", error);

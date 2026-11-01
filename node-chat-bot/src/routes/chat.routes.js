@@ -1,6 +1,6 @@
 import express from "express";
 import multer from "multer";
-import { chat, uploadPdf } from "../controllers/chat.controller.js";
+import { chat, uploadDocument } from "../controllers/chat.controller.js";
 import { redactChatQuery } from "../middleware/sensitiveData.middleware.js";
 
 const router = express.Router();
@@ -22,7 +22,7 @@ router.post(
     })(req, res, next);
   },
   upload.single("file"),
-  uploadPdf,
+  uploadDocument,
 );
 
 router.post("/chat", redactChatQuery, chat);

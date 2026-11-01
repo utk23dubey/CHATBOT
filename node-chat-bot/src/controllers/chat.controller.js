@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createChatGraph, getChatModel } from "../services/chatGraph.service.js";
-import { ingestPdf } from "../services/pdfIngestion.service.js";
+import { ingestDocument } from "../services/pdfIngestion.service.js";
 import {
   getChatHistory,
   saveChatExchange,
@@ -86,7 +86,13 @@ async function streamChatResponse({
       model: getChatModel(model).model,
       threadId,
       contextMode: result.documentsSatisfied
-        ? "pdf"
+        ? result.documents.some(
+            (document) =>
+              document.metadata.documentType &&
+              document.metadata.documentType !== "pdf",
+          )
+          ? "document"
+          : "pdf"
         : result.webResults.length > 0
           ? "web"
           : "llm",
@@ -94,8 +100,14 @@ async function streamChatResponse({
         ? {
             chunks: result.documents.map((document) => ({
               source: document.metadata.source || null,
+              ...(typeof document.metadata.documentType === "string"
+                ? { documentType: document.metadata.documentType }
+                : {}),
               ...(Number.isInteger(document.metadata.pageNumber)
                 ? { pageNumber: document.metadata.pageNumber }
+                : {}),
+              ...(typeof document.metadata.sheetName === "string"
+                ? { sheetName: document.metadata.sheetName }
                 : {}),
               content: document.pageContent,
             })),
@@ -122,7 +134,7 @@ async function streamChatResponse({
   }
 }
 
-export async function uploadPdf(req, res, next) {
+export async function uploadDocument(req, res, next) {
   const file =
     req.file ||
     (Buffer.isBuffer(req.body)
@@ -135,16 +147,12 @@ export async function uploadPdf(req, res, next) {
   if (!file) {
     return res.status(400).json({
       error:
-        "Upload a PDF as the 'file' multipart field or send the raw PDF as the request body.",
+        "Upload a PDF, DOCX, CSV, XLS, or XLSX file in the 'file' multipart field. Raw request bodies are supported for PDFs.",
     });
   }
 
-  if (!file.buffer.subarray(0, 5).equals(Buffer.from("%PDF-"))) {
-    return res.status(400).json({ error: "The uploaded file is not a valid PDF." });
-  }
-
   try {
-    const result = await ingestPdf(file);
+    const result = await ingestDocument(file);
     return res.status(201).json(result);
   } catch (error) {
     if (error.status === 400) {

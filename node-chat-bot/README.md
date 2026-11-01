@@ -66,16 +66,16 @@ After starting the server with LangSmith configured, send a chat request and ope
 
 ### `POST /upload`
 
-Ingest a PDF into the configured Qdrant collection. The file can be sent as multipart form data in the `file` field:
+Ingest a PDF, DOCX, CSV, XLS, or XLSX file into the configured Qdrant collection. Send the file as multipart form data in the `file` field:
 
 ```sh
 curl -X POST http://localhost:3000/upload \
   -F "file=@./document.pdf"
 ```
 
-The endpoint also accepts the raw PDF as the request body; optionally provide its name with the `x-filename` header. Uploads are limited to 20 MB. The response includes the filename, page and chunk counts, and Qdrant collection name.
+The endpoint also accepts a raw PDF as the request body; optionally provide its name with the `x-filename` header. Raw request bodies are supported only for PDFs. Uploads are limited to 20 MB. PDF responses retain the filename, page and chunk counts, and Qdrant collection name; other formats return the filename, chunk count, and collection name.
 
-Ingestion extracts PDF pages, splits their text into chunks of 1,000 characters with 200 characters of overlap, creates local Hugging Face embeddings, and writes the chunks and source/page metadata to Qdrant. The embedding model is downloaded on first use. Configure the Qdrant Cloud endpoint, API key, and collection with `QDRANT_URL`, `QDRANT_API_KEY`, and `QDRANT_COLLECTION`. The API creates keyword and integer payload indexes for `metadata.source` and `metadata.pageNumber` on existing and new collections so page expansion filters work.
+Ingestion extracts PDF pages, DOCX text, CSV rows, and Excel workbook sheets. Text is split into chunks of 1,000 characters with 200 characters of overlap, embedded locally with Hugging Face, and written to Qdrant with source and document-type metadata. PDF page metadata and existing PDF page expansion remain unchanged; non-PDF files are retrieved as their indexed chunks. The embedding model is downloaded on first use. Configure the Qdrant Cloud endpoint, API key, and collection with `QDRANT_URL`, `QDRANT_API_KEY`, and `QDRANT_COLLECTION`. The API creates keyword and integer payload indexes for `metadata.source` and `metadata.pageNumber` on existing and new collections so page expansion filters work.
 
 Completed chat exchanges are stored in SQLite in the `chat_messages` table. Each exchange saves the user's message and the assistant's final answer together. The latest 20 messages for a thread are loaded as context for later requests, including after a server restart. The database defaults to `./chat_history.sqlite` and can be relocated with `CHAT_HISTORY_DB_PATH`.
 

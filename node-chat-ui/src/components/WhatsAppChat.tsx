@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import './WhatsAppChat.css';
 
-type ContextMode = 'pdf' | 'web' | 'llm';
+type ContextMode = 'pdf' | 'document' | 'web' | 'llm';
 
 interface Message {
   id: string;
@@ -13,6 +13,7 @@ interface Message {
 
 const CONTEXT_MODE_LABELS: Record<ContextMode, string> = {
   pdf: 'PDF',
+  document: 'Uploaded document',
   web: 'Web search',
   llm: 'LLM',
 };
@@ -29,8 +30,10 @@ const WhatsAppChat: React.FC = () => {
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const attachmentButtonRef = useRef<HTMLButtonElement>(null);
 
   // Auto-scroll to the bottom when a new message is added
   const scrollToBottom = () => {
@@ -40,6 +43,20 @@ const WhatsAppChat: React.FC = () => {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  useEffect(() => {
+    if (!isAttachmentMenuOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsAttachmentMenuOpen(false);
+        attachmentButtonRef.current?.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isAttachmentMenuOpen]);
 
   const consumeChatStream = async (response: Response, messageId: string) => {
     if (!response.body) {
@@ -95,6 +112,7 @@ const WhatsAppChat: React.FC = () => {
         const contextMode =
           'contextMode' in data &&
           (data.contextMode === 'pdf' ||
+            data.contextMode === 'document' ||
             data.contextMode === 'web' ||
             data.contextMode === 'llm')
             ? data.contextMode
@@ -128,7 +146,14 @@ const WhatsAppChat: React.FC = () => {
     }
   };
 
-  const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const openFilePicker = (accept: string) => {
+    if (!fileInputRef.current) return;
+    fileInputRef.current.accept = accept;
+    setIsAttachmentMenuOpen(false);
+    fileInputRef.current.click();
+  };
+
+  const handleDocumentUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
@@ -142,12 +167,13 @@ const WhatsAppChat: React.FC = () => {
       );
     };
 
-    if (!file.name.toLowerCase().endsWith('.pdf')) {
+    const extension = file.name.split('.').pop()?.toLowerCase();
+    if (!extension || !['pdf', 'docx', 'csv', 'xls', 'xlsx'].includes(extension)) {
       setMessages((currentMessages) => [
         ...currentMessages,
         {
           id: uploadMessageId,
-          text: 'Please select a PDF file.',
+          text: 'Choose a PDF, DOCX, CSV, XLS, or XLSX file.',
           sender: 'them',
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         },
@@ -160,7 +186,7 @@ const WhatsAppChat: React.FC = () => {
         ...currentMessages,
         {
           id: uploadMessageId,
-          text: 'The PDF must be 20 MB or smaller.',
+          text: 'Files must be 20 MB or smaller.',
           sender: 'them',
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         },
@@ -196,7 +222,7 @@ const WhatsAppChat: React.FC = () => {
           'error' in result &&
           typeof result.error === 'string'
             ? result.error
-            : `PDF upload failed (${response.status})`;
+            : `File upload failed (${response.status})`;
         throw new Error(errorMessage);
       }
 
@@ -210,9 +236,9 @@ const WhatsAppChat: React.FC = () => {
           : '';
       updateUploadMessage(`Uploaded ${file.name}${pages}.`);
     } catch (error) {
-      console.error('Failed to upload PDF:', error);
+      console.error('Failed to upload document:', error);
       updateUploadMessage(
-        error instanceof Error ? error.message : 'Unable to upload PDF.',
+        error instanceof Error ? error.message : 'Unable to upload file.',
       );
     } finally {
       setIsUploading(false);
@@ -326,17 +352,19 @@ const WhatsAppChat: React.FC = () => {
             ref={fileInputRef}
             className="file-input"
             type="file"
-            accept=".pdf,application/pdf"
-            onChange={handlePdfUpload}
-            aria-label="Upload a PDF"
+            onChange={handleDocumentUpload}
+            aria-label="Upload a document"
           />
           <button
+            ref={attachmentButtonRef}
             type="button"
             className="attach-button"
-            aria-label="Attach PDF"
-            title="Attach PDF"
+            aria-label="Attach a document"
+            title="Attach a document"
             disabled={isUploading}
-            onClick={() => fileInputRef.current?.click()}
+            aria-expanded={isAttachmentMenuOpen}
+            aria-haspopup="dialog"
+            onClick={() => setIsAttachmentMenuOpen((isOpen) => !isOpen)}
           >
             <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">
               <path d="M16.5 6.5 7.41 15.59a2 2 0 0 0 2.83 2.82l9.19-9.19a4 4 0 0 0-5.66-5.65l-9.9 9.9a6 6 0 0 0 8.49 8.48l8.49-8.48-1.42-1.42-8.49 8.49a4 4 0 0 1-5.66-5.66l9.9-9.9a2 2 0 0 1 2.83 2.83l-9.19 9.19a0 0 0 0 1-1.41-1.41l9.09-9.09z" />
@@ -357,6 +385,62 @@ const WhatsAppChat: React.FC = () => {
           </button>
         </form>
       </footer>
+      {isAttachmentMenuOpen && (
+        <div
+          className="attachment-modal-backdrop"
+          onClick={() => setIsAttachmentMenuOpen(false)}
+        >
+          <section
+            className="attachment-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="attachment-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="attachment-modal-header">
+              <div>
+                <h2 id="attachment-modal-title">Attach a document</h2>
+                <p>Choose a file type to upload</p>
+              </div>
+              <button
+                type="button"
+                className="attachment-modal-close"
+                aria-label="Close attachment menu"
+                onClick={() => setIsAttachmentMenuOpen(false)}
+              >
+                ×
+              </button>
+            </header>
+            <div className="attachment-options">
+              <button type="button" className="attachment-option" onClick={() => openFilePicker('.pdf,application/pdf')}>
+                <span className="attachment-option-icon pdf-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M6 2h8l5 5v15H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm7 1.5V8h4.5M7 17h2a1.5 1.5 0 0 0 0-3H7v5m6 0v-5h1.5a2.5 2.5 0 0 1 0 5H13Zm5-5v5m0-5h3m-3 2h2" /></svg>
+                </span>
+                <span><strong>PDF</strong><small>Portable document</small></span>
+              </button>
+              <button type="button" className="attachment-option" onClick={() => openFilePicker('.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document')}>
+                <span className="attachment-option-icon docx-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M6 2h8l5 5v15H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm7 1.5V8h4.5M7 12l1.2 6 1.3-4 1.3 4 1.2-6m2 0v6h2a2 2 0 0 0 0-4h-2" /></svg>
+                </span>
+                <span><strong>Word document</strong><small>.docx</small></span>
+              </button>
+              <button type="button" className="attachment-option" onClick={() => openFilePicker('.csv,text/csv')}>
+                <span className="attachment-option-icon csv-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M4 3h16v18H4zM4 8h16M4 13h16M9 8v13m6-13v13" /></svg>
+                </span>
+                <span><strong>CSV</strong><small>Comma-separated values</small></span>
+              </button>
+              <button type="button" className="attachment-option" onClick={() => openFilePicker('.xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')}>
+                <span className="attachment-option-icon excel-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M4 3h16v18H4zM4 8h16M4 13h16M9 8v13m6-13v13M6 10l2 3-2 3m4-6v6" /></svg>
+                </span>
+                <span><strong>Excel sheet</strong><small>.xls, .xlsx</small></span>
+              </button>
+            </div>
+            <p className="attachment-modal-note">Maximum file size: 20 MB</p>
+          </section>
+        </div>
+      )}
     </div>
   );
 };
