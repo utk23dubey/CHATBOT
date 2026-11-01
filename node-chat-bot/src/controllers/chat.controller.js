@@ -1,10 +1,5 @@
-import { randomUUID } from "node:crypto";
 import { createChatGraph, getChatModel } from "../services/chatGraph.service.js";
 import { ingestDocument } from "../services/pdfIngestion.service.js";
-import {
-  getChatHistory,
-  saveChatExchange,
-} from "../models/chatHistory.model.js";
 
 const THREAD_COOKIE_NAME = "chat_thread_id";
 
@@ -80,7 +75,6 @@ async function streamChatResponse({
     }
 
     const { values: result } = await graph.getState(config);
-    saveChatExchange(threadId, result.query, result.answer);
     sendEvent(res, "complete", {
       answer: result.answer,
       model: getChatModel(model).model,
@@ -232,7 +226,6 @@ export async function chat(req, res, next) {
       config,
       input: {
         query: query.trim(),
-        chatHistory: getChatHistory(conversationId),
         documents: [],
         documentsSatisfied: false,
         requiresWebSearch: false,

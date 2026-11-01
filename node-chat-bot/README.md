@@ -11,6 +11,7 @@ An Express API for chatting with OpenAI, Gemini, or a local Ollama model. Upload
   - Ollama installed and running locally for Ollama chat; no API key is required.
   - `TAVILY_API_KEY` for web-search fallback.
   - `QDRANT_URL` and `QDRANT_API_KEY` for Qdrant Cloud vector storage.
+  - `DATABASE_URL` for PostgreSQL-backed LangGraph checkpoints and chat history.
   - `LANGSMITH_API_KEY` to send traces to LangSmith (optional).
 
 ## Setup
@@ -28,6 +29,8 @@ An Express API for chatting with OpenAI, Gemini, or a local Ollama model. Upload
    ```
 
    Leave out provider keys you do not use. Set `QDRANT_URL` and `QDRANT_API_KEY` from your Qdrant Cloud cluster, and optionally set `QDRANT_COLLECTION`. To use Ollama, start its local service and pull the default model with `ollama pull llama3.2:3b`; you can set `OLLAMA_CHAT_MODEL` to a different installed model. `TAVILY_API_KEY` is required when the graph needs web search. Confirm that configured model IDs are available to your provider account.
+
+    Set `DATABASE_URL` to your PostgreSQL connection URL in the form `postgresql://USER:PASSWORD@HOST:5432/DATABASE`. Replace the example password with the real database password; URL-encode special characters in the username or password (for example, `@` as `%40`).
 
    LangSmith tracing is enabled by `LANGSMITH_TRACING=true`. Set `LANGSMITH_API_KEY` to your LangSmith API key and choose a `LANGSMITH_PROJECT` name; traces are then sent automatically by LangChain. `LANGSMITH_ENDPOINT` is optional and is only needed for a non-default LangSmith region. Use the API endpoint (for example, `https://apac.api.smith.langchain.com` for APAC), not the LangSmith web-app host. Without an API key, LangSmith tracing will not be available.
 
@@ -77,9 +80,9 @@ The endpoint also accepts a raw PDF as the request body; optionally provide its 
 
 Ingestion extracts PDF pages, DOCX text, CSV rows, and Excel workbook sheets. Text is split into chunks of 1,000 characters with 200 characters of overlap, embedded locally with Hugging Face, and written to Qdrant with source and document-type metadata. PDF page metadata and existing PDF page expansion remain unchanged; non-PDF files are retrieved as their indexed chunks. The embedding model is downloaded on first use. Configure the Qdrant Cloud endpoint, API key, and collection with `QDRANT_URL`, `QDRANT_API_KEY`, and `QDRANT_COLLECTION`. The API creates keyword and integer payload indexes for `metadata.source` and `metadata.pageNumber` on existing and new collections so page expansion filters work.
 
-Completed chat exchanges are stored in SQLite in the `chat_messages` table. Each exchange saves the user's message and the assistant's final answer together. The latest 20 messages for a thread are loaded as context for later requests, including after a server restart. The database defaults to `./chat_history.sqlite` and can be relocated with `CHAT_HISTORY_DB_PATH`.
+Conversation state is persisted by LangGraph's PostgreSQL checkpointer using `DATABASE_URL`. The server creates or migrates the checkpointer tables at startup. The latest 20 user/assistant messages per thread are retained as model context, including across server restarts. Chat text is redacted before it is stored in the checkpoint history. Existing data in `chat_history.sqlite` is left untouched but is not automatically imported.
 
-Chat queries, extracted PDF text, and PDF filenames are redacted for common email, phone, government-ID, payment-card, medical-ID, date-of-birth, labeled name, and labeled address patterns before model use or persistence. Existing chat-history entries are redacted when loaded and updated in SQLite. This pattern-based filtering is a safeguard, not complete PHI detection or a guarantee of HIPAA compliance; review redacted output and do not send data that must not be processed.
+Chat queries, extracted document text, and document filenames are redacted for common email, phone, government-ID, payment-card, medical-ID, date-of-birth, labeled name, and labeled address patterns before model use or persistence. This pattern-based filtering is a safeguard, not complete PHI detection or a guarantee of HIPAA compliance; review redacted output and do not send data that must not be processed.
 
 ### `POST /chat`
 
@@ -92,7 +95,7 @@ curl -N -b chat-cookies.txt -c chat-cookies.txt \
   -d "{\"query\":\"What does the document say about compliance?\",\"model\":\"openai\"}"
 ```
 
-If `model` is omitted, the server uses `DEFAULT_CHAT_MODEL`. The endpoint responds with Server-Sent Events: after the model finishes generating, a `token` event contains the full answer, followed by a `complete` event containing the full `answer`, selected `model`, `threadId`, and `contextMode` (`pdf`, `web`, or `llm`). PDF-grounded completions include `chunks` with source and page details; web-grounded completions include Tavily `sources`. An `error` event is sent if processing fails after the response begins.
+If `model` is omitted, the server uses `DEFAULT_CHAT_MODEL`. The endpoint responds with Server-Sent Events: `token` events stream generated text, followed by a `complete` event containing the full `answer`, selected `model`, `threadId`, and `contextMode` (`pdf`, `document`, `web`, or `llm`). Document-grounded completions include `chunks` with source and page details; web-grounded completions include Tavily `sources`. An `error` event is sent if processing fails after the response begins.
 
 ## Request flow
 
@@ -127,14 +130,13 @@ The same graph is available as a standalone [Mermaid chart](./langgraph.mmd).
 | `src/routes/chat.routes.js` | Defines the `/chat` and `/upload` endpoints and PDF body parsing. |
 | `src/controllers/chat.controller.js` | Validates requests, invokes services, and formats responses. |
 | `src/services/pdfIngestion.service.js` | Loads, splits, and ingests PDF pages. |
-| `src/services/chatGraph.service.js` | Builds the LangGraph workflow and selects chat models. |
 | `src/models/vectorStore.model.js` | Connects to Qdrant and configures embeddings and page expansion. |
 | `src/scripts/migrateLanceDbToQdrant.js` | Migrates the configured LanceDB table into Qdrant Cloud. |
-| `src/models/chatHistory.model.js` | Stores completed user/assistant exchanges and loads recent conversation history from SQLite. |
+| `src/services/chatGraph.service.js` | Builds the LangGraph workflow and persists thread state with the PostgreSQL checkpointer. |
 | `src/middleware/errorHandler.js` | Converts request errors into HTTP responses. |
 
 ## Notes
 
 - LanceDB is used only as a migration source; the application stores and searches PDF vectors in Qdrant Cloud.
-- Chat history is persisted per `threadId` in SQLite. The HTTP-only `chat_thread_id` cookie lasts seven days; clients that do not retain cookies should send the returned `threadId` on each request. The SQLite database contains conversation content, so protect its file and backups as sensitive data.
+- Chat history is persisted per `threadId` by the PostgreSQL checkpointer. The HTTP-only `chat_thread_id` cookie lasts seven days; clients that do not retain cookies should send the returned `threadId` on each request. Protect the PostgreSQL database and its backups as sensitive data.
 - The document-sufficiency check always uses OpenAI when PDF chunks are retrieved, regardless of the answer model. `OPENAI_API_KEY` is required for this evaluation even if Gemini is selected for answer generation.

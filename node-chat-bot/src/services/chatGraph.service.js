@@ -2,11 +2,11 @@ import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import {
   Annotation,
   END,
-  MemorySaver,
   START,
   StateGraph,
   getWriter,
 } from "@langchain/langgraph";
+import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { ChatOllama } from "@langchain/ollama";
 import { ChatOpenAI } from "@langchain/openai";
 
@@ -18,7 +18,52 @@ import {
 } from "../models/vectorStore.model.js";
 import { redactSensitiveData } from "../middleware/sensitiveData.middleware.js";
 
-const chatMemory = new MemorySaver();
+let chatMemory;
+let chatMemorySetup;
+
+function getChatMemory() {
+  if (!chatMemory) {
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) {
+      throw new Error(
+        "DATABASE_URL must be set to use PostgreSQL chat persistence.",
+      );
+    }
+
+    let databaseUrl;
+    try {
+      databaseUrl = new URL(connectionString);
+    } catch {
+      throw new Error(
+        "DATABASE_URL is not a valid PostgreSQL connection URL. Use the format postgresql://USER:PASSWORD@HOST:5432/DATABASE and URL-encode special characters in the username or password.",
+      );
+    }
+
+    if (
+      !["postgres:", "postgresql:"].includes(databaseUrl.protocol) ||
+      !databaseUrl.hostname ||
+      databaseUrl.pathname.length < 2
+    ) {
+      throw new Error(
+        "DATABASE_URL must include a PostgreSQL scheme, host, and database name. Use the format postgresql://USER:PASSWORD@HOST:5432/DATABASE.",
+      );
+    }
+
+    chatMemory = PostgresSaver.fromConnString(connectionString);
+  }
+  return chatMemory;
+}
+
+export async function setupChatMemory() {
+  const checkpointer = getChatMemory();
+  if (!chatMemorySetup) {
+    chatMemorySetup = checkpointer.setup().catch((error) => {
+      chatMemorySetup = undefined;
+      throw error;
+    });
+  }
+  await chatMemorySetup;
+}
 
 const webSearchRequiredPattern =
   /\b(?:search(?:ing)?(?:\s+(?:the\s+)?(?:web|internet)|\s+online|\s+for)|web\s+search|browse(?:\s+the)?\s+web|look\s+up(?:\s+online)?|find\s+(?:this\s+)?online|today|tonight|tomorrow|right\s+now|currently|current|latest|recent|breaking|live|upcoming|this\s+(?:week|month|year)|weather|temperature|forecast|prices?|news|scores?|exchange\s+rates?|stock\s+prices?|share\s+prices?|market\s+prices?|traffic|open\s+now|business\s+hours|time\s+in)\b/i;
@@ -321,13 +366,15 @@ export function createChatGraph(chatModel) {
       throw new Error("The chat model returned an empty response.");
     }
 
+    const persistedAnswer = redactSensitiveData(answer);
+
     return {
-      answer,
+      answer: persistedAnswer,
       chatHistory: [
         ...chatHistory,
-        { role: "human", content: query },
-        { role: "assistant", content: answer },
-      ],
+        { role: "human", content: redactSensitiveData(query) },
+        { role: "assistant", content: persistedAnswer },
+      ].slice(-20),
     };
   };
 
@@ -373,5 +420,5 @@ export function createChatGraph(chatModel) {
     )
     .addEdge("web_search", "generate_answer")
     .addEdge("generate_answer", END)
-    .compile({ checkpointer: chatMemory });
+    .compile({ checkpointer: getChatMemory() });
 }
