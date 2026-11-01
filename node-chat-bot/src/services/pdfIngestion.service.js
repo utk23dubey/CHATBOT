@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { PDFLoader } from "@langchain/community/document_loaders/fs/pdf";
 import { Document } from "@langchain/core/documents";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
@@ -5,7 +6,9 @@ import mammoth from "mammoth";
 import * as XLSX from "@e965/xlsx";
 import { redactSensitiveData } from "../middleware/sensitiveData.middleware.js";
 import {
+  addHybridDocuments,
   getVectorStore,
+  hybridVectorStoreCollectionName,
   vectorStoreCollectionName,
 } from "../models/vectorStore.model.js";
 
@@ -203,9 +206,28 @@ export async function ingestDocument(file) {
     chunk.metadata.chunkIndex = chunkIndex;
     pageChunkIndexes.set(key, chunkIndex + 1);
   }
+  const pointIds = chunks.map((chunk) => {
+    const hash = createHash("sha256")
+      .update(
+        JSON.stringify([
+          chunk.metadata.source,
+          chunk.metadata.documentType,
+          chunk.metadata.pageNumber,
+          chunk.metadata.sheetName,
+          chunk.metadata.chunkIndex,
+          chunk.pageContent,
+        ]),
+      )
+      .digest();
+    hash[6] = (hash[6] & 0x0f) | 0x50;
+    hash[8] = (hash[8] & 0x3f) | 0x80;
+    const hex = hash.subarray(0, 16).toString("hex");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  });
   const vectorStore = await getVectorStore({ createIfMissing: true });
 
-  await vectorStore.addDocuments(chunks);
+  await vectorStore.addDocuments(chunks, { ids: pointIds });
+  await addHybridDocuments(chunks, { ids: pointIds });
 
   return documentType === "pdf"
     ? {
@@ -214,6 +236,7 @@ export async function ingestDocument(file) {
         pages: documents.length,
         chunks: chunks.length,
         collection: vectorStoreCollectionName,
+        hybridCollection: hybridVectorStoreCollectionName,
         table: vectorStoreCollectionName,
       }
     : {
@@ -221,6 +244,7 @@ export async function ingestDocument(file) {
         filename: source,
         chunks: chunks.length,
         collection: vectorStoreCollectionName,
+        hybridCollection: hybridVectorStoreCollectionName,
         table: vectorStoreCollectionName,
       };
 }

@@ -15,8 +15,10 @@ import { Document } from "@langchain/core/documents";
 import {
   expandRetrievedPages,
   getVectorStore,
+  searchHybridDocuments,
 } from "../models/vectorStore.model.js";
 import { redactSensitiveData } from "../middleware/sensitiveData.middleware.js";
+import { rerankDocuments } from "./reranker.service.js";
 
 let chatMemory;
 let chatMemorySetup;
@@ -180,13 +182,49 @@ const ChatGraphState = Annotation.Root({
 
 export function createChatGraph(chatModel) {
   const retrieveDocuments = async ({ query }) => {
+    const retrievalLimit = Number.parseInt(
+      process.env.QDRANT_RETRIEVAL_LIMIT || "8",
+      10,
+    );
+    const candidateLimit = Number.parseInt(
+      process.env.QDRANT_RETRIEVAL_CANDIDATES || "24",
+      10,
+    );
+    const resultLimit =
+      Number.isInteger(retrievalLimit) && retrievalLimit > 0
+        ? retrievalLimit
+        : 8;
+    const candidates =
+      Number.isInteger(candidateLimit) && candidateLimit >= resultLimit
+        ? candidateLimit
+        : Math.max(resultLimit * 3, 24);
+    const searchMode = process.env.QDRANT_SEARCH_MODE || "hybrid";
+    let matches;
+    if (searchMode === "dense") {
+      const vectorStore = await getVectorStore();
+      matches = vectorStore
+        ? await vectorStore.similaritySearch(query, candidates)
+        : [];
+    } else if (searchMode === "hybrid") {
+      matches = await searchHybridDocuments(query, candidates);
+      if (matches === null) {
+        const vectorStore = await getVectorStore();
+        matches = vectorStore
+          ? await vectorStore.similaritySearch(query, candidates)
+          : [];
+      }
+    } else {
+      throw new Error(
+        "QDRANT_SEARCH_MODE must be either 'hybrid' or 'dense'.",
+      );
+    }
+
+    matches = await rerankDocuments(query, matches);
+    matches = matches.slice(0, resultLimit);
     const vectorStore = await getVectorStore();
-    const matches = vectorStore
-      ? await vectorStore.similaritySearch(query, 8)
-      : [];
     const documents = vectorStore
       ? await expandRetrievedPages(matches, vectorStore)
-      : [];
+      : matches;
     const redactedDocuments = documents.map(
       (document) =>
         new Document({

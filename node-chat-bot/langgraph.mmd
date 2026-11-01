@@ -1,7 +1,9 @@
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f2f0ff', 'primaryTextColor': '#000000', 'secondaryTextColor': '#000000', 'tertiaryTextColor': '#000000', 'lineColor': '#4b5563', 'primaryBorderColor': '#4b5563'}}}%%
 flowchart TD
-    START([Start]) --> RETRIEVE["Retrieve matching document chunks from Qdrant"]
-    RETRIEVE --> HAS_DOCS{"Any document chunks retrieved?"}
+    START([Start]) --> RETRIEVE["Retrieve dense + sparse candidates from Qdrant"]
+    RETRIEVE --> FUSE["Fuse rankings with Reciprocal Rank Fusion"]
+    FUSE --> RERANK["Optionally rerank chunks with cross-encoder"]
+    RERANK --> HAS_DOCS{"Any document chunks retrieved?"}
 
     HAS_DOCS -- Yes --> EVALUATE["Check document sufficiency with OpenAI"]
     EVALUATE --> SUFFICIENT{"Documents answer the query?"}
