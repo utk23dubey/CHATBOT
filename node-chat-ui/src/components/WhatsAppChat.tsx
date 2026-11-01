@@ -18,6 +18,13 @@ const CONTEXT_MODE_LABELS: Record<ContextMode, string> = {
   llm: 'LLM',
 };
 
+function isFetchFailure(error: unknown): boolean {
+  return (
+    error instanceof TypeError &&
+    /failed to fetch|fetch failed|networkerror|load failed/i.test(error.message)
+  );
+}
+
 const INITIAL_MESSAGES: Message[] = [
   { id: '1', text: 'Hey! Are we still meeting for lunch today?', sender: 'them', timestamp: '11:45 AM' },
   { id: '2', text: 'Yes, definitely. I was thinking about that new Italian place.', sender: 'me', timestamp: '11:47 AM' },
@@ -28,6 +35,7 @@ const INITIAL_MESSAGES: Message[] = [
 const WhatsAppChat: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
   const [inputText, setInputText] = useState('');
+  const [chatError, setChatError] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
@@ -264,16 +272,9 @@ const WhatsAppChat: React.FC = () => {
     };
 
     setMessages((currentMessages) => [...currentMessages, newMessage, botMessage]);
+    setChatError('');
     setInputText('');
     setIsSending(true);
-
-    const updateBotMessage = (text: string) => {
-      setMessages((currentMessages) =>
-        currentMessages.map((message) =>
-          message.id === botMessage.id ? { ...message, text } : message,
-        ),
-      );
-    };
 
     try {
       const response = await fetch('http://localhost:3000/chat', {
@@ -293,8 +294,18 @@ const WhatsAppChat: React.FC = () => {
       await consumeChatStream(response, botMessage.id);
     } catch (error) {
       console.error('Failed to send chat message:', error);
-      updateBotMessage(
-        error instanceof Error ? error.message : 'Unable to send message.',
+      setMessages((currentMessages) =>
+        currentMessages.filter(
+          (message) =>
+            message.id !== newMessage.id && message.id !== botMessage.id,
+        ),
+      );
+      setChatError(
+        isFetchFailure(error)
+          ? 'Unable to connect to the chat service. Please try again in a moment.'
+          : error instanceof Error
+            ? error.message
+            : 'Unable to send message.',
       );
     } finally {
       setIsSending(false);
@@ -318,6 +329,17 @@ const WhatsAppChat: React.FC = () => {
 
       {/* Message Area */}
       <main className="chat-body">
+        {chatError && (
+          <div className="chat-error-alert" role="alert">
+            <span className="message-alert">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3 2.8 19a1.4 1.4 0 0 0 1.2 2.1h16a1.4 1.4 0 0 0 1.2-2.1L12 3Z" />
+                <path d="M12 9v5m0 3h.01" />
+              </svg>
+              <span className="message-text">{chatError}</span>
+            </span>
+          </div>
+        )}
         {messages.map((msg) => (
           <div 
             key={msg.id} 

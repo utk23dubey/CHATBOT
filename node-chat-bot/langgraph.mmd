@@ -1,7 +1,9 @@
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f2f0ff', 'primaryTextColor': '#000000', 'secondaryTextColor': '#000000', 'tertiaryTextColor': '#000000', 'lineColor': '#4b5563', 'primaryBorderColor': '#4b5563'}}}%%
 flowchart TD
-    START([Start]) --> RETRIEVE["Retrieve matching document chunks from Qdrant"]
-    RETRIEVE --> HAS_DOCS{"Any document chunks retrieved?"}
+    START([Start]) --> RETRIEVE["Retrieve dense + sparse candidates from Qdrant"]
+    RETRIEVE --> FUSE["Fuse rankings with Reciprocal Rank Fusion"]
+    FUSE --> RERANK["Optionally rerank chunks with cross-encoder"]
+    RERANK --> HAS_DOCS{"Any document chunks retrieved?"}
 
     HAS_DOCS -- Yes --> EVALUATE["Check document sufficiency with OpenAI"]
     EVALUATE --> SUFFICIENT{"Documents answer the query?"}
@@ -18,7 +20,7 @@ flowchart TD
     WEB_ANSWER --> COMPLETE_WEB["Return answer, contextMode: web, and sources"]
     LLM_ANSWER --> COMPLETE_LLM["Return answer and contextMode: llm"]
 
-    HISTORY[("Conversation history from SQLite<br/>LangGraph checkpoint: MemorySaver")] -. query context .-> ROUTE
+    HISTORY[("Recent conversation history<br/>LangGraph PostgreSQL checkpointer")] -. query context .-> ROUTE
     HISTORY -. answer context .-> DOC_ANSWER
     HISTORY -. answer context .-> WEB_ANSWER
     HISTORY -. answer context .-> LLM_ANSWER

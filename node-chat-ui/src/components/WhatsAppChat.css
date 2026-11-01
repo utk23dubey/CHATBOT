@@ -107,9 +107,42 @@
   border-top-left-radius: 0;
 }
 
+.chat-error-alert {
+  align-self: flex-start;
+  max-width: 65%;
+  padding: 8px 12px;
+  border: 1px solid #f1c27d;
+  border-radius: 8px;
+  background-color: #fff8eb;
+  box-shadow: 0 1px 0.5px rgba(11, 20, 26, 0.13);
+}
+
+.message-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: #7a4b00;
+}
+
+.message-alert svg {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  fill: none;
+  stroke: #c17a00;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
 .message-text {
   color: #111b21;
   word-wrap: break-word;
+}
+
+.chat-error-alert .message-text {
+  color: #7a4b00;
 }
 
 .context-mode {
