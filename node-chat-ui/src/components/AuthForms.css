@@ -1,0 +1,255 @@
+/* AuthForms.css — WhatsApp-inspired palette shared with WhatsAppChat.css */
+
+.auth-shell {
+  width: 100%;
+  min-height: min(760px, calc(100dvh - 48px));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 12px;
+  box-sizing: border-box;
+  background-color: #d9dbd5;
+  background-image: radial-gradient(circle at 12% 20%, rgba(0, 168, 132, 0.14), transparent 42%),
+    radial-gradient(circle at 88% 82%, rgba(0, 128, 105, 0.12), transparent 45%);
+  border-radius: 12px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+}
+
+.auth-card {
+  width: min(440px, 100%);
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  padding: 28px;
+  box-sizing: border-box;
+  border-radius: 16px;
+  background: #ffffff;
+  color: #111b21;
+  box-shadow: 0 16px 48px rgba(11, 20, 26, 0.18);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.auth-header {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.auth-logo {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #e1f3ee;
+  color: #008069;
+}
+
+.auth-header h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+}
+
+.auth-header p {
+  margin: 6px 0 0;
+  color: #667781;
+  font-size: 14px;
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 20px;
+  border-radius: 10px;
+  background: #f0f2f5;
+}
+
+.auth-tab {
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #54656f;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s, color 0.2s, box-shadow 0.2s;
+}
+
+.auth-tab:hover:not(:disabled) {
+  color: #008069;
+}
+
+.auth-tab.is-active {
+  background: #ffffff;
+  color: #008069;
+  box-shadow: 0 1px 3px rgba(11, 20, 26, 0.14);
+}
+
+.auth-tab:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.auth-tab:focus-visible,
+.auth-submit:focus-visible,
+.auth-form input:focus-visible,
+.auth-form select:focus-visible {
+  outline: 2px solid #00a884;
+  outline-offset: 2px;
+}
+
+.auth-success {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px solid #a5d6c4;
+  border-radius: 8px;
+  background: #effaf5;
+  color: #10664e;
+  font-size: 13px;
+}
+
+.auth-alert {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px solid #f1c27d;
+  border-radius: 8px;
+  background: #fff8eb;
+  color: #7a4b00;
+  font-size: 13px;
+}
+
+.auth-alert p,
+.auth-alert ul {
+  margin: 0;
+}
+
+.auth-alert ul {
+  padding-left: 18px;
+}
+
+.auth-alert p + ul {
+  margin-top: 6px;
+}
+
+.auth-card [hidden] {
+  display: none;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.auth-field label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #3b4a54;
+}
+
+.auth-field input,
+.auth-field select {
+  width: 100%;
+  padding: 11px 12px;
+  box-sizing: border-box;
+  border: 1px solid #e1e6e8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #111b21;
+  font: inherit;
+  font-size: 14px;
+}
+
+.auth-field input::placeholder {
+  color: #8696a0;
+}
+
+.auth-field input:focus,
+.auth-field select:focus {
+  border-color: #00a884;
+  outline: none;
+}
+
+.auth-field input[aria-invalid='true'],
+.auth-field select[aria-invalid='true'] {
+  border-color: #c17a00;
+}
+
+.auth-field input:disabled,
+.auth-field select:disabled,
+.auth-tab:disabled,
+.auth-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.field-error {
+  color: #a35a00;
+  font-size: 12px;
+}
+
+.field-hint {
+  color: #667781;
+  font-size: 12px;
+}
+
+.auth-submit {
+  margin-top: 4px;
+  padding: 12px 16px;
+  border: 0;
+  border-radius: 24px;
+  background: #00a884;
+  color: #ffffff;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.auth-submit:hover:not(:disabled) {
+  background: #008f6f;
+}
+
+.auth-footer-note {
+  margin: 18px 0 0;
+  text-align: center;
+  color: #8696a0;
+  font-size: 11px;
+}
+
+@media (max-width: 760px) {
+  .auth-shell {
+    min-height: 100dvh;
+    padding: 16px 12px;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .auth-card {
+    max-height: calc(100dvh - 32px);
+  }
+}
+
+@media (max-width: 420px) {
+  .auth-card {
+    padding: 20px;
+  }
+
+  .auth-header h1 {
+    font-size: 21px;
+  }
+}

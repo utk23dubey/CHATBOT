@@ -1,7 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { getAuthToken } from '../auth';
+import { API_BASE_URL } from '../constants';
 import './WhatsAppChat.css';
 
 type ContextMode = 'pdf' | 'document' | 'web' | 'llm';
+
+interface WhatsAppChatProps {
+  displayName?: string;
+  onLogout: () => void;
+  onUnauthorized: () => void;
+}
 
 interface Message {
   id: string;
@@ -32,7 +40,11 @@ const INITIAL_MESSAGES: Message[] = [
   { id: '4', text: 'Let\'s aim for 1:00 PM. See you there!', sender: 'me', timestamp: '11:50 AM' },
 ];
 
-const WhatsAppChat: React.FC = () => {
+const WhatsAppChat: React.FC<WhatsAppChatProps> = ({
+  displayName = 'John Doe',
+  onLogout,
+  onUnauthorized,
+}) => {
   const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
   const [inputText, setInputText] = useState('');
   const [chatError, setChatError] = useState('');
@@ -166,6 +178,12 @@ const WhatsAppChat: React.FC = () => {
     e.target.value = '';
     if (!file) return;
 
+    const token = getAuthToken();
+    if (!token) {
+      onUnauthorized();
+      return;
+    }
+
     const uploadMessageId = `upload-${Date.now()}`;
     const updateUploadMessage = (text: string) => {
       setMessages((currentMessages) =>
@@ -217,10 +235,17 @@ const WhatsAppChat: React.FC = () => {
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch('http://localhost:3000/upload', {
+      const response = await fetch(`${API_BASE_URL}/upload`, {
         method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
         body: formData,
       });
+      if (response.status === 401) {
+        onUnauthorized();
+        return;
+      }
       const result: unknown = await response.json();
 
       if (!response.ok) {
@@ -258,6 +283,12 @@ const WhatsAppChat: React.FC = () => {
     const query = inputText.trim();
     if (!query || isSending) return;
 
+    const token = getAuthToken();
+    if (!token) {
+      onUnauthorized();
+      return;
+    }
+
     const newMessage: Message = {
       id: Date.now().toString(),
       text: query,
@@ -277,9 +308,12 @@ const WhatsAppChat: React.FC = () => {
     setIsSending(true);
 
     try {
-      const response = await fetch('http://localhost:3000/chat', {
+      const response = await fetch(`${API_BASE_URL}/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           query,
           threadId: 'user-chat-1',
@@ -287,6 +321,11 @@ const WhatsAppChat: React.FC = () => {
           clientMessageId: newMessage.id,
         }),
       });
+
+      if (response.status === 401) {
+        onUnauthorized();
+        return;
+      }
 
       if (!response.ok) {
         throw new Error(`Chat request failed (${response.status})`);
@@ -322,8 +361,13 @@ const WhatsAppChat: React.FC = () => {
           </svg>
         </div>
         <div className="contact-info">
-          <h2>John Doe</h2>
+          <h2>{displayName}</h2>
           <span>online</span>
+        </div>
+        <div className="chat-header-actions">
+          <button type="button" className="logout-button" onClick={onLogout}>
+            Log out
+          </button>
         </div>
       </header>
 

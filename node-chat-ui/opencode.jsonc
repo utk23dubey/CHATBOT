@@ -1,0 +1,23 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Loaded only when OpenCode is opened inside node-chat-ui.
+  // Grants package-relative edits in addition to the repo-relative
+  // "node-chat-ui/**" rule in the shared ui-engineer agent file.
+  "default_agent": "ui-engineer",
+  "instructions": ["README.md"],
+  "agents": {
+    "ui-engineer": {
+      "permissions": [
+        { "action": "edit", "resource": "src/**", "effect": "allow" },
+        { "action": "edit", "resource": "index.html", "effect": "allow" },
+        { "action": "edit", "resource": "package.json", "effect": "allow" },
+        { "action": "edit", "resource": "package-lock.json", "effect": "allow" },
+        { "action": "edit", "resource": "vite.config.ts", "effect": "allow" },
+        { "action": "edit", "resource": "eslint.config.js", "effect": "allow" },
+        { "action": "edit", "resource": "tsconfig*.json", "effect": "allow" },
+        { "action": "edit", "resource": "README.md", "effect": "allow" },
+        { "action": "read", "resource": "../node-chat-bot/**", "effect": "deny" }
+      ]
+    }
+  }
+}

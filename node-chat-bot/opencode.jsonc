@@ -1,0 +1,55 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Loaded only when OpenCode is opened inside node-chat-bot.
+  // Agent rules here grant package-relative paths in addition to the
+  // repo-relative "node-chat-bot/**" rules in the shared agent files.
+  "default_agent": "be-engineer",
+  "instructions": ["README.md"],
+  "agents": {
+    "be-engineer": {
+      "permissions": [
+        { "action": "edit", "resource": "src/**", "effect": "allow" },
+        { "action": "edit", "resource": "index.js", "effect": "allow" },
+        { "action": "edit", "resource": "package.json", "effect": "allow" },
+        { "action": "edit", "resource": "package-lock.json", "effect": "allow" },
+        { "action": "edit", "resource": ".env.example", "effect": "allow" },
+        { "action": "edit", "resource": "README.md", "effect": "allow" },
+        { "action": "edit", "resource": "langgraph.mmd", "effect": "allow" },
+        { "action": "read", "resource": "../node-chat-ui/**", "effect": "deny" }
+      ]
+    },
+    "be-rag-specialist": {
+      "permissions": [
+        { "action": "edit", "resource": "src/services/chatGraph.service.js", "effect": "allow" },
+        { "action": "edit", "resource": "src/services/reranker.service.js", "effect": "allow" },
+        { "action": "edit", "resource": "src/models/vectorStore.model.js", "effect": "allow" },
+        { "action": "edit", "resource": "src/scripts/migrateQdrantToHybrid.js", "effect": "allow" },
+        { "action": "edit", "resource": "src/scripts/migrateLanceDbToQdrant.js", "effect": "allow" },
+        { "action": "edit", "resource": ".env.example", "effect": "allow" },
+        { "action": "edit", "resource": "README.md", "effect": "allow" },
+        { "action": "read", "resource": "../node-chat-ui/**", "effect": "deny" }
+      ]
+    },
+    "be-ingestion-specialist": {
+      "permissions": [
+        { "action": "edit", "resource": "src/services/pdfIngestion.service.js", "effect": "allow" },
+        { "action": "edit", "resource": "src/middleware/sensitiveData.middleware.js", "effect": "allow" },
+        { "action": "edit", "resource": "src/routes/chat.routes.js", "effect": "allow" },
+        { "action": "edit", "resource": "src/controllers/chat.controller.js", "effect": "allow" },
+        { "action": "edit", "resource": "src/scripts/migrateQdrantToHybrid.js", "effect": "allow" },
+        { "action": "edit", "resource": "src/scripts/migrateLanceDbToQdrant.js", "effect": "allow" },
+        { "action": "edit", "resource": "README.md", "effect": "allow" },
+        { "action": "read", "resource": "../node-chat-ui/**", "effect": "deny" }
+      ]
+    },
+    "be-reviewer": {
+      "permissions": [
+        { "action": "read", "resource": "src/**", "effect": "allow" },
+        { "action": "read", "resource": "index.js", "effect": "allow" },
+        { "action": "read", "resource": "README.md", "effect": "allow" },
+        { "action": "read", "resource": "langgraph.mmd", "effect": "allow" },
+        { "action": "read", "resource": "../node-chat-ui/**", "effect": "deny" }
+      ]
+    }
+  }
+}
