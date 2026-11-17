@@ -1,4 +1,5 @@
 import express from "express";
+import authRoutes from "./routes/auth.routes.js";
 import chatRoutes from "./routes/chat.routes.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import cors from "cors";
@@ -14,6 +15,7 @@ app.use((req, res, next) => {
   return express.json()(req, res, next);
 });
 
+app.use("/", authRoutes);
 app.use("/", chatRoutes);
 app.use(errorHandler);
 

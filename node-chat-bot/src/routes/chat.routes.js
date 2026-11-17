@@ -1,6 +1,7 @@
 import express from "express";
 import multer from "multer";
 import { chat, uploadDocument } from "../controllers/chat.controller.js";
+import { authenticateToken } from "../middleware/auth.middleware.js";
 import { redactChatQuery } from "../middleware/sensitiveData.middleware.js";
 
 const router = express.Router();
@@ -11,6 +12,7 @@ const upload = multer({
 
 router.post(
   "/upload",
+  authenticateToken,
   (req, res, next) => {
     if (req.is("multipart/form-data")) {
       return next();
@@ -25,6 +27,6 @@ router.post(
   uploadDocument,
 );
 
-router.post("/chat", redactChatQuery, chat);
+router.post("/chat", authenticateToken, redactChatQuery, chat);
 
 export default router;
