@@ -1,4 +1,7 @@
 PDF RAG Chatbot 
+<img width="1917" height="961" alt="image" src="https://github.com/user-attachments/assets/9d72ed23-f2a0-456f-9bb6-713bdd38f61d" />
+
+
 
 <img width="1860" height="765" alt="image" src="https://github.com/user-attachments/assets/a74feaa8-f102-4f6a-a56c-f21111178835" />
 
